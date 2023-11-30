@@ -398,6 +398,7 @@ namespace ttc_tools
 		}
 
 		fclose(ttc);
+		return true;
 	}
 
 	inline bool unzipTTC_Memery(const std::string& filename, TTC& ttcData)
