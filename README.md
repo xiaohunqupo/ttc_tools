@@ -1,6 +1,7 @@
 # ttc_tools
 
-把 TrueType Collection（`.ttc`）拆成独立的 `.ttf` / `.otf`。C++11，仅头文件，无第三方依赖。
+把 TrueType Collection（`.ttc`）拆成独立的 `.ttf` / `.otf`。C++11，无第三方依赖，默认仅头文件
+（与 [shx_tools](https://github.com/xiaohunqupo/shx_tools) 同一套目录与构建约定）。
 
 版本 0.3.0 ｜ [变更日志](CHANGELOG.md) ｜ [格式说明](docs/ttc_format.md)
 
@@ -23,10 +24,66 @@
 .ttc  --ttc_tools-->  .ttf / .otf ────────┘
 ```
 
+## 目录
+
+| 目录 | 内容 |
+|---|---|
+| `inc/ttc_tools/` | 公开头文件，一个文件一件事；版本号在 `ttc_tools.h` 里手写维护，`config.h.in` 只承载 `TTC_TOOLS_HEAD_ONLY` 开关（由 CMake 配置成 `<build>/generated/ttc_tools/config.h`） |
+| `src/ttc_tools/` | 与 `inc` 一一对应的实现，加一个内部用的 `common.h`（字节序、上限、校验和数学） |
+| `sample/` | `ttcsplit`（拆分/列面）与 `ttcdump`（打印表目录并验证校验和） |
+| `test/` | 单文件回归测试，自带合成夹具 |
+| `docs/` | `.ttc` 字节布局与拆分算法 |
+| `fonts/` | 只放说明；真实字体不进仓库（见下） |
+
+头文件与实现的对应关系就是调用层次：
+
+```
+ttc_tools.h  ─┬─ 版本宏 TTC_TOOLS_VERSION_*（手写维护）
+              ├─ config.h        (生成，只有 TTC_TOOLS_HEAD_ONLY)
+              ├─ ttc_error.h     error_code / error_info / error_name
+              ├─ ttc_file.h      整文件读写、目录创建、UTF-8 路径
+              ├─ ttc_sfnt.h      Sfnt：一个面的表目录 + 重建成独立字体
+              ├─ ttc_name.h      name 表解码（UTF-16BE/Latin-1）、文件名规则
+              ├─ ttc_collection.h Collection：集合头、ListTTC / UnzipTTC / UnzipTTCFace
+              └─ ttc_extract.h   UnzipTTCToDir / UnzipTTCFaceToFile，0.2.0 兼容别名
+```
+
+## 构建
+
+```bash
+cmake -S . -B build            # 默认 header only
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+| CMake 选项 | 默认 | 含义 |
+|---|---|---|
+| `TTC_TOOLS_HEAD_ONLY` | `ON` | 头文件末尾直接 `#include` 同名 `.cpp`，所有函数加 `TTC_TOOLS_HEAD_ONLY_INLINE`；库是 INTERFACE 目标，`inc` 与 `src` 都要在 include 路径上 |
+| `TTC_TOOLS_HEAD_ONLY=OFF` | | `src/*.cpp` 编成静态库，使用者只需要 `inc` |
+| `TTC_TOOLS_BUILD_TESTS` | `ON` | 构建 `ttc_tests` 并注册到 CTest |
+| `TTC_TOOLS_BUILD_SAMPLES` | `ON` | 构建 `ttcsplit` 与 `ttcdump` |
+
+**版本号由项目自己维护**：`TTC_TOOLS_VERSION_MAJOR` / `MINOR` / `PATCH` / `STRING` 写在
+[`inc/ttc_tools/ttc_tools.h`](inc/ttc_tools/ttc_tools.h) 开头，改版本就是改这一处（并补一条
+`CHANGELOG.md`），构建系统只读取它，不参与生成。
+
+`config.h` 只承载"构建方式"这个开关，它不在源码树里：`CMakeLists.txt` 把
+`inc/ttc_tools/config.h.in` 的 `#cmakedefine TTC_TOOLS_HEAD_ONLY` 配置到
+`<build>/generated/ttc_tools/config.h`，所以构建目录必须排在 `inc` 之前。不用 CMake 时，把
+`config.h.in` 复制成 `inc/ttc_tools/config.h`，按注释决定是否 `#define TTC_TOOLS_HEAD_ONLY`。
+
+集成方式：
+
+| 方式 | 做法 |
+|---|---|
+| CMake 子项目 | `add_subdirectory(ttc_tools)` 后 `target_link_libraries(app PRIVATE ttc_tools::ttc_tools)` |
+| 手工拷贝（header only） | 拷 `inc/ttc_tools/` + `src/ttc_tools/*.cpp` + 生成的 `config.h`，两个目录都进 include 路径 |
+| 手工拷贝（编译成库） | 只拷 `inc/ttc_tools/`，把 `src/ttc_tools/*.cpp` 加进工程 |
+
 ## 快速开始
 
 ```cpp
-#include "ttc_tools.h"
+#include "ttc_tools/ttc_tools.h"
 
 ttc_tools::error_info error;
 
@@ -50,22 +107,28 @@ if (ttc_tools::UnzipTTCFace("C:/Windows/Fonts/simsun.ttc", 0, face, nullptr, &er
     ttf_load_from_mem(face.data(), (int)face.size(), &ttf, false);
 ```
 
-命令行（示例程序，也是最小用法参考）：
+需要更细的控制时用类：
+
+```cpp
+ttc_tools::Collection collection;
+collection.parse(bytes, size, &error);          // 只解析集合头
+ttc_tools::Sfnt sfnt;
+collection.sfnt_of(0, sfnt, &error);            // 只解析第 0 个面的表目录
+const ttc_tools::Table_Record* head = sfnt.find(ttc_tools::Sfnt::tag_head);
+for (std::size_t i = 0; i < sfnt.table_count(); ++i)
+    std::printf("%s %u bytes\n",
+        ttc_tools::Sfnt::tag_string(sfnt.table(i).tag).c_str(),
+        (unsigned int)sfnt.table(i).length);
+```
+
+命令行：
 
 ```
-ttc_tools <input.ttc> [output_dir]       # 全部拆出
-ttc_tools -l <input.ttc>                 # 列字面
-ttc_tools -x <input.ttc> <index> <out>   # 拆单个面
-ttc_tools -v | -h
+ttcsplit <input.ttc> [output_dir]       # 全部拆出
+ttcsplit -l <input.ttc>                 # 列字面
+ttcsplit -x <input.ttc> <index> <out>   # 拆单个面
+ttcdump  <input.ttc> [...]              # 打印表目录 + 校验和验证，退出码是问题数
 ```
-
-集成方式三选一：
-
-| 方式 | 做法 |
-|---|---|
-| CMake 子项目 | `add_subdirectory(ttc_tools)` 后 `target_link_libraries(app PRIVATE ttc_tools::ttc_tools)` |
-| CMake 安装 | 安装后由 `ttc_toolsTargets.cmake` 提供 `ttc_tools::ttc_tools`（INTERFACE 目标） |
-| 直接拷贝 | 只需 `include/ttc_tools.h` 与 `include/ttc_tools.ipp` 两个文件 |
 
 ## API
 
@@ -76,6 +139,9 @@ ttc_tools -v | -h
 | `UnzipTTCFace(file/data, index, ttf, face, error)` | 只重建一个字面（大集合时内存友好） |
 | `UnzipTTCToDir(file/data, dir, prefix, written, error)` | 全部落盘，返回写出的路径 |
 | `UnzipTTCFaceToFile(file, index, path, face, error)` | 单面落到指定路径 |
+| `Collection` / `Sfnt` | 分两步解析：只读集合头，只读一个面的表目录 |
+| `Sfnt::checksum()` / `Sfnt::tag_string()` | 校验和数学与标签打印，`ttcdump` 就是这么写的 |
+| `file_stem_for()` / `sanitize_file_name()` | 输出文件名的规则，可单独使用 |
 | `UnzipTTc()` / `unzipTTC_Memery()` | 0.2.0 的旧名字，保留可用（后者在 0.2.0 里是有缺陷的，现在只是 `UnzipTTC()` 的别名） |
 
 失败时返回 `false`，并把原因写进可选的 `error_info`（`code` 见 `error_code`，`message` 是
@@ -133,29 +199,31 @@ ttc_tools -v | -h
 - 只支持 TrueType Collection；`.woff` / `.woff2` / `.dfont` 不在范围内。
 - 大集合一次性进内存时峰值约为 `面数 × 文件长度`，需要控制内存请用 `UnzipTTCFace()`。
 
-## 构建与测试
+## 测试
 
-```bash
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
+`test/test_ttc.cpp` 是单文件、无框架的回归测试，分两部分：
 
-测试不依赖仓库里的任何字体：合成夹具逐字节构造集合（含共享表、v2 头、CFF 面、畸形头部），
-覆盖拆分正确性、命名、落盘、兼容接口与 12 类非法输入。若本机有真实字体，会自动追加一轮
-"真字体校验"（逐表比对 + 整文件校验和）。当前本机结果：合成用例 291 项断言通过，15 个系统
-`.ttc` 全部通过（每个字体的断言数随面数增加）。
+- **合成夹具**（不依赖任何字体文件）：逐字节构造集合，覆盖双面往返、共享表池、2.0 头、
+  `OTTO` 面、奇数长度表的 4 字节填充、重名与无名字面命名、目录自动创建、兼容接口、12 类
+  畸形输入，以及 `Sfnt` / `Collection` / 文件名规则等公开接口。
+- **真实集合**：CMake 把 `fonts/*.ttc` 通配后作为参数传给测试程序；没有字体时退回
+  `TTC_TOOLS_TEST_FONT`、`fonts/simsun.ttc`、`C:/Windows/Fonts/*.ttc`，全都没有就打印 `SKIP`。
+  每个字体逐表比对源集合与输出、校验每张表校验和、校验整文件校验和 `0xB1B0AFBA`。
 
-指定字体：`TTC_TOOLS_TEST_FONT=/path/to/any.ttc`；默认依次尝试 `fonts/simsun.ttc`、
-`fonts/msyh.ttc`、`C:/Windows/Fonts/simsun.ttc`。
+断言独立于实现：测试自带一份 sfnt/ttc 读取器，库里的 bug 不会藏在同一个读取器后面。
+本机结果：单个 `simsun.ttc` 一轮 327 项断言，15 个系统集合 / 36 个字面一起跑 2 205 项，
+全部通过。
 
-> 仓库不附带字体文件。`.ttc` 多为厂商专有字体（例如中易宋体），仓库里只放代码。
+> 仓库不附带字体文件。`.ttc` 多为厂商专有字体（例如中易宋体），仓库里只放代码；把任意
+> `.ttc` 放进 `fonts/` 就会被测试自动使用，且不会被 git 跟踪。
 
 ## 与 shx_tools 的关系
 
 `shx_tools` 做的是反方向：把 AutoCAD `.shx` 的形/字体解析成轮廓，再**写出** `.ttf` / `.otf`。
-两者共用同一段 sfnt 知识（表目录、4 字节对齐、`0xB1B0AFBA` 校验和补偿），但一个写、一个拆。
-`ttc_tools` 不依赖 `shx_tools`，也不与它共享代码——各自作为独立的三方库可以被单独取用。
+两者共用同一段 sfnt 知识（表目录、4 字节对齐、`0xB1B0AFBA` 校验和补偿），但一个写、一个拆；
+目录布局、版本宏的位置（都写在 umbrella 头里、由项目自己维护）、`config.h.in` 与 CMake 的
+`*_HEAD_ONLY` 开关也保持一致。`ttc_tools` 不依赖 `shx_tools`，也不与它共享代码——各自作为独立
+的三方库可以被单独取用。
 
 ## 许可
 

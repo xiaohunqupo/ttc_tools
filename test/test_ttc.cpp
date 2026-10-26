@@ -24,7 +24,7 @@
 #	include <unistd.h>
 #endif
 
-#include "ttc_tools.h"
+#include "ttc_tools/ttc_tools.h"
 
 /* ------------------------------------------------------------------ harness */
 
@@ -559,8 +559,14 @@ static bool file_exists(const std::string& path)
 	return true;
 }
 
-static std::string find_real_font()
+static std::string find_real_font(int argc, char** argv)
 {
+	// The corpora CMake passes on the command line win over the fallbacks below.
+	for (int i = 1; i < argc; ++i)
+	{
+		if (file_exists(argv[i]))
+			return argv[i];
+	}
 	const char* from_env = std::getenv("TTC_TOOLS_TEST_FONT");
 	if (from_env && *from_env && file_exists(from_env))
 		return from_env;
@@ -930,15 +936,8 @@ static void test_compat_api()
 	std::remove(path.c_str());
 }
 
-static void test_real_font()
+static void test_real_font(const std::string& path)
 {
-	section("real collection");
-	const std::string path = find_real_font();
-	if (path.empty())
-	{
-		std::printf("  SKIP: no .ttc found (set TTC_TOOLS_TEST_FONT)\n");
-		return;
-	}
 	std::printf("  using %s\n", path.c_str());
 
 	ref::Bytes collection;
@@ -1013,7 +1012,102 @@ static void test_real_font()
 	}
 }
 
-int main()
+static void test_classes()
+{
+	section("Sfnt / Collection classes");
+	const ref::Bytes collection = fixture::make_ttc(0x00020000u, fixture::two_faces());
+
+	ttc_tools::Collection parsed;
+	ttc_tools::error_info error;
+	CHECK_MSG(parsed.parse(&collection[0], collection.size(), &error), error.message);
+	CHECK(parsed.valid());
+	CHECK(parsed.version() == 0x00020000u);
+	CHECK(parsed.face_count() == 2);
+	CHECK(parsed.face_offset(0) == ref::be32(collection, 12));
+
+	ttc_tools::Sfnt sfnt;
+	CHECK(parsed.sfnt_of(0, sfnt, &error));
+	CHECK(sfnt.valid());
+	CHECK(sfnt.table_count() == 5);
+	CHECK(sfnt.version() == 0x00010000u);
+	CHECK(!sfnt.is_cff());
+	CHECK(sfnt.index_of(ttc_tools::Sfnt::tag_head) >= 0);
+	CHECK(sfnt.find(0x7A7A7A7Au) == nullptr);
+	CHECK(ttc_tools::Sfnt::tag_string(ttc_tools::Sfnt::tag_head) == "head");
+	CHECK(ttc_tools::Sfnt::checksum(&collection[0], collection.size()) ==
+		ref::sum32(&collection[0], collection.size()));
+
+	// build() must agree with the free function, byte for byte.
+	std::vector<std::uint8_t> built;
+	CHECK_MSG(sfnt.build(&collection[0], collection.size(), built, &error), error.message);
+	ttc_tools::TTC::TTF expected;
+	ttc_tools::Face face;
+	CHECK(ttc_tools::UnzipTTCFace(&collection[0], collection.size(), 0, expected, &face, &error));
+	CHECK(built == expected);
+	CHECK(ttc_tools::Sfnt::checksum(&built[0], built.size()) == 0xB1B0AFBAu);
+
+	// describe() must agree with ListTTC().
+	ttc_tools::Face described;
+	CHECK(parsed.describe(0, described, &error));
+	CHECK(described.family == face.family);
+	CHECK(described.num_glyphs == face.num_glyphs);
+
+	CHECK(!parsed.sfnt_of(2, sfnt, &error));
+	CHECK(error.code == ttc_tools::err_out_of_range);
+
+	section("file names");
+	CHECK(ttc_tools::sanitize_file_name("  a/b:c*d  ") == "a_b_c_d");
+	CHECK(ttc_tools::sanitize_file_name("..") == "");
+	CHECK(ttc_tools::same_file_name("SimSun.TTF", "simsun.ttf"));
+	CHECK(!ttc_tools::same_file_name("SimSun", "SimSun2"));
+
+	ttc_tools::Face named;
+	named.family = "Same";
+	named.subfamily = "Bold";
+	std::vector<std::string> used;
+	CHECK(ttc_tools::file_stem_for(named, 3, "Face", used) == "Same");
+	used.push_back("same");
+	CHECK(ttc_tools::file_stem_for(named, 3, "Face", used) == "Same_Bold");
+	used.push_back("Same_Bold");
+	CHECK(ttc_tools::file_stem_for(named, 3, "Face", used) == "Same_Bold_2");
+
+	ttc_tools::Face unnamed;
+	CHECK(ttc_tools::file_stem_for(unnamed, 3, "Face", used) == "Face_03");
+	CHECK(ttc_tools::file_stem_for(unnamed, 3, "", used) == "_03");
+
+	section("paths");
+	CHECK(ttc_tools::parent_directory("a/b/c.ttf") == "a/b");
+	CHECK(ttc_tools::parent_directory("c.ttf") == ".");
+	CHECK(ttc_tools::join_path("a/b", "c.ttf") == "a/b/c.ttf");
+	CHECK(ttc_tools::join_path("a/b/", "c.ttf") == "a/b/c.ttf");
+}
+
+static void test_real_fonts(int argc, char** argv)
+{
+	section("real collections");
+
+	std::vector<std::string> corpus;
+	for (int i = 1; i < argc; ++i)
+	{
+		if (file_exists(argv[i]))
+			corpus.push_back(argv[i]);
+	}
+	if (corpus.empty())
+	{
+		const std::string fallback = find_real_font(argc, argv);
+		if (!fallback.empty() && corpus.empty())
+			corpus.push_back(fallback);
+	}
+	if (corpus.empty())
+	{
+		std::printf("  SKIP: no .ttc found (pass one on the command line or set TTC_TOOLS_TEST_FONT)\n");
+		return;
+	}
+	for (std::size_t i = 0; i < corpus.size(); ++i)
+		test_real_font(corpus[i]);
+}
+
+int main(int argc, char** argv)
 {
 	std::printf("ttc_tools %s regression test\n", TTC_TOOLS_VERSION_STRING);
 	test_version();
@@ -1025,7 +1119,8 @@ int main()
 	test_name_collision();
 	test_malformed();
 	test_compat_api();
-	test_real_font();
+	test_classes();
+	test_real_fonts(argc, argv);
 
 	// The tests already removed their files; drop the scratch directories too.
 	remove_dir("ttc_tools_test_tmp/out");

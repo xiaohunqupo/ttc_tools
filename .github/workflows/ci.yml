@@ -1,0 +1,34 @@
+name: build-and-test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        head_only: [ON, OFF]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -A x64 -DTTC_TOOLS_HEAD_ONLY=${{ matrix.head_only }}
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        head_only: [ON, OFF]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTTC_TOOLS_HEAD_ONLY=${{ matrix.head_only }}
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

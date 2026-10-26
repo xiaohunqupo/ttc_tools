@@ -3,7 +3,29 @@
 ## 0.3.0
 
 一次以"能托付"为目标的收尾：修掉 0.2.0 里跑不通的接口、把逐字节 I/O 换成内存搬运、给外部
-输入加上边界校验，并补齐测试、CMake 与文档。
+输入加上边界校验，按 `shx_tools` 的约定重排目录与构建，并补齐测试与文档。
+
+### 架构与构建
+
+- **移除 Visual Studio 工程**（`Project/*.vcxproj`），构建只走 CMake：`inc/` 公开头文件、
+  `src/` 实现、`sample/` 示例、`test/` 测试，与 `shx_tools` 完全一致。
+- **版本号由项目自己维护**：`TTC_TOOLS_VERSION_MAJOR` / `MINOR` / `PATCH` / `STRING` 写在
+  `inc/ttc_tools/ttc_tools.h` 开头（与 `shx_tools` 的 `SHX_TOOLS_VER_*` 同一位置），升级就是
+  改这一处加一条变更日志。CMake 不再配置版本，`project()` 也不声明 `VERSION`，避免两个数字
+  打架；`config.h.in` 只保留构建方式开关 `TTC_TOOLS_HEAD_ONLY`。
+- **`TTC_TOOLS_HEAD_ONLY` 开关**（默认 `ON`）：开启时头文件末尾直接 include 同名 `.cpp`，
+  函数用 `TTC_TOOLS_HEAD_ONLY_INLINE` 保持 `inline`，库是 INTERFACE 目标；关闭时 `src/*.cpp`
+  编成静态库。两种模式都在本机验证过（`ctest` 1/1 通过）。
+- 单文件 `include/ttc_tools.ipp` 拆成六个模块：`ttc_error`（错误码）、`ttc_file`（整文件读写
+  与目录）、`ttc_sfnt`（`Sfnt` 类：一个面的表目录 + 重建）、`ttc_name`（`name` 表与文件名
+  规则）、`ttc_collection`（`Collection` 类与 `ListTTC`/`UnzipTTC*`）、`ttc_extract`（落盘）。
+  内部辅助集中在 `src/ttc_tools/common.h`。
+- **新增类接口** `Collection` / `Sfnt`：可以只解析集合头、只解析一个面的表目录，或单独调用
+  `Sfnt::build()` / `Sfnt::checksum()` / `Sfnt::tag_string()`；0.3.0 的自由函数全部保留。
+- 示例程序改成两个：`ttcsplit`（拆分/列面/单面导出）与 `ttcdump`（打印表目录并验证每张表
+  校验和与整文件校验和，退出码是问题数）。
+- 补 `.github/workflows/ci.yml`：Windows 与 Linux，`TTC_TOOLS_HEAD_ONLY` 取 `ON` / `OFF`
+  各跑一遍 configure + build + ctest。
 
 ### 修复
 
@@ -39,17 +61,18 @@
 - 跨平台：去掉 `fopen_s` / `sprintf_s` / `_MAX_PATH`；Windows 上用 `_wfopen` + UTF-8→UTF-16
   转换，非 ASCII 字体名也能落盘；目录创建用 `_wmkdir` / `mkdir`。
 - 示例程序改为真正的命令行（`-l` / `-x` / `-v` / `-h`），不再是硬编码路径的空壳。
-- `CMakeLists.txt`（INTERFACE 目标 + `ctest` 接入）、`test/test_ttc.cpp`（自包含回归测试）、
-  `docs/ttc_format.md`（格式与算法说明）、`.gitignore`。
+- `test/test_ttc.cpp`（自包含回归测试）、`docs/ttc_format.md`（格式与算法说明）、
+  `.gitignore`、`.github/workflows/ci.yml`。
 
 ### 测试
 
 - 合成夹具覆盖：双字面往返、共享表池、2.0 头部、`OTTO` 面、奇数长度表的 4 字节填充、
-  重名与无名字面命名、目录自动创建、兼容接口、12 类畸形输入。
+  重名与无名字面命名、目录自动创建、兼容接口、12 类畸形输入，以及 `Sfnt` / `Collection` /
+  文件名规则的公开接口。
 - 断言独立于实现：测试自带一份 sfnt/ttc 读取器，逐表比对源集合与输出、校验每张表校验和、
   校验整文件校验和 `0xB1B0AFBA`、校验 4 字节对齐与 `head.magicNumber`。
-- 真实字体可选集成测试（`TTC_TOOLS_TEST_FONT`，或自动探测 `fonts/*.ttc` /
-  `C:/Windows/Fonts/simsun.ttc`）。本机 15 个系统集合、36 个字面全部通过。
+- 真实集合由 CMake 把 `fonts/*.ttc` 通配后作为参数传入，没有字体时退回
+  `TTC_TOOLS_TEST_FONT` 与系统字体路径。本机 15 个系统集合、36 个字面全部通过。
 
 ### 仓库
 

@@ -1,53 +1,41 @@
-// ttc_tools.cpp : command line front end for the .ttc splitter.
+// ttcsplit: write every face of a TrueType Collection as a standalone .ttf / .otf.
 //
-//   ttc_tools <input.ttc> [output_dir]     write every face as <family>.ttf / .otf
-//   ttc_tools -l <input.ttc>               list the faces
-//   ttc_tools -x <input.ttc> <index> <out> extract a single face
-//   ttc_tools -v                           print the version
-//   ttc_tools -h                           print this help
+//   ttcsplit <input.ttc> [output_dir]       write every face as <family>.ttf / .otf
+//   ttcsplit -l <input.ttc>                 list the faces
+//   ttcsplit -x <input.ttc> <index> <out>   extract a single face
+//   ttcsplit -v                             print the version
+//   ttcsplit -h                             print this help
 
-#define _CRT_SECURE_NO_WARNINGS
+#include "ttc_tools/ttc_tools.h"
 #include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
-
-#include "ttc_tools.h"
 
 namespace
 {
 	void print_usage(std::FILE* out)
 	{
 		std::fprintf(out,
-			"ttc_tools %s - split a TrueType Collection into standalone fonts\n"
+			"ttcsplit %s - split a TrueType Collection into standalone fonts\n"
 			"\n"
 			"usage:\n"
-			"  ttc_tools <input.ttc> [output_dir]       extract every face\n"
-			"  ttc_tools -l <input.ttc>                 list the faces\n"
-			"  ttc_tools -x <input.ttc> <index> <out>   extract one face\n"
-			"  ttc_tools -v                             print the version\n"
-			"  ttc_tools -h                             print this help\n"
+			"  ttcsplit <input.ttc> [output_dir]       extract every face\n"
+			"  ttcsplit -l <input.ttc>                 list the faces\n"
+			"  ttcsplit -x <input.ttc> <index> <out>   extract one face\n"
+			"  ttcsplit -v                             print the version\n"
+			"  ttcsplit -h                             print this help\n"
 			"\n"
-			"Faces are written as <family>.ttf, or .otf for CFF outlines. The output\n"
-			"directory defaults to the directory of the input file and is created when\n"
-			"missing. Results go to stdout, problems to stderr.\n",
+			"Faces are written as <family>.ttf, or .otf for CFF outlines. The output directory\n"
+			"defaults to the directory of the input file and is created when missing. Results go\n"
+			"to stdout, problems to stderr.\n",
 			TTC_TOOLS_VERSION_STRING);
 	}
 
 	void print_error(const std::string& what, const ttc_tools::error_info& error)
 	{
-		std::fprintf(stderr, "ttc_tools: %s: %s (%s)\n",
+		std::fprintf(stderr, "ttcsplit: %s: %s (%s)\n",
 			what.c_str(), error.message.c_str(), ttc_tools::error_name(error.code));
-	}
-
-	std::string parent_directory(const std::string& path)
-	{
-		const std::size_t slash = path.find_last_of("/\\");
-		if (slash == std::string::npos)
-			return std::string(".");
-		if (slash == 0)
-			return path.substr(0, 1);
-		return path.substr(0, slash);
 	}
 
 	const char* sfnt_name(std::uint32_t version)
@@ -86,7 +74,7 @@ namespace
 
 	int extract_all(const std::string& input, const std::string& output_dir)
 	{
-		const std::string dir = output_dir.empty() ? parent_directory(input) : output_dir;
+		const std::string dir = output_dir.empty() ? ttc_tools::parent_directory(input) : output_dir;
 		std::vector<std::string> written;
 		ttc_tools::error_info error;
 		if (!ttc_tools::UnzipTTCToDir(input, dir, "Face", &written, &error))
@@ -132,7 +120,7 @@ int main(int argc, char** argv)
 	}
 	if (first == "-v" || first == "--version")
 	{
-		std::printf("ttc_tools %s\n", TTC_TOOLS_VERSION_STRING);
+		std::printf("ttcsplit %s\n", TTC_TOOLS_VERSION_STRING);
 		return 0;
 	}
 	if (first == "-l" || first == "--list")
@@ -155,14 +143,14 @@ int main(int argc, char** argv)
 		const long index = std::strtol(argv[3], &end, 10);
 		if (!end || *end != '\0' || index < 0)
 		{
-			std::fprintf(stderr, "ttc_tools: '%s' is not a face index\n", argv[3]);
+			std::fprintf(stderr, "ttcsplit: '%s' is not a face index\n", argv[3]);
 			return 2;
 		}
 		return extract_one(argv[2], (std::size_t)index, argv[4]);
 	}
 	if (!first.empty() && first[0] == '-')
 	{
-		std::fprintf(stderr, "ttc_tools: unknown option '%s'\n", first.c_str());
+		std::fprintf(stderr, "ttcsplit: unknown option '%s'\n", first.c_str());
 		print_usage(stderr);
 		return 2;
 	}
