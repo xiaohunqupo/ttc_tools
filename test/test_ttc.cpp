@@ -1265,6 +1265,13 @@ int main(int argc, char** argv)
 	// The tests already removed their files; drop the scratch directories too.
 	remove_dir("ttc_tools_test_tmp/out");
 	remove_dir("ttc_tools_test_tmp/dup");
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+	remove_dir("ttc_tools_test_tmp/compat");
+>>>>>>> 109d551d6562b8281873ba2c7ec2616d82d512f2
+>>>>>>> b04ce93fb6931a543d9985ee30d6f1ed3e2f2e4f
 	remove_dir("ttc_tools_test_tmp/rejected");
 	remove_dir("ttc_tools_test_tmp/dirs/a/b/c");
 	remove_dir("ttc_tools_test_tmp/dirs/a/b");
