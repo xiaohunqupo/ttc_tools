@@ -15,10 +15,9 @@
 
 #if defined(_WIN32)
 #	include <direct.h>
-#else
-#	include <sys/stat.h>
-#	include <sys/types.h>
 #endif
+#include <sys/stat.h>
+#include <sys/types.h>
 
 namespace ttc_tools
 {
@@ -133,17 +132,41 @@ namespace ttc_tools
 #endif
 		}
 
-		//! Create one directory. `true` when it exists afterwards, which includes "already there".
-		bool make_dir(const std::string& path)
+		//! `true` when the path names an existing directory (a plain file does not count).
+		bool is_directory(const std::string& path)
+		{
+#if defined(_WIN32)
+			struct _stat info;
+			if (::_wstat(utf8_to_wide(path).c_str(), &info) != 0)
+				return false;
+			return (info.st_mode & _S_IFDIR) != 0;
+#else
+			struct stat info;
+			if (::stat(path.c_str(), &info) != 0)
+				return false;
+			return S_ISDIR(info.st_mode) != 0;
+#endif
+		}
+
+		/*!
+		 * \brief Create one directory.
+		 * \return 1 when it exists afterwards (created, or already a directory), 0 when it cannot be
+		 *         created, and -1 when something that is not a directory already owns the name.
+		 * \note `mkdir` reports "already exists" for a file just like for a directory, so the state
+		 *       has to be confirmed with a second query.
+		 */
+		int make_dir(const std::string& path)
 		{
 #if defined(_WIN32)
 			if (::_wmkdir(utf8_to_wide(path).c_str()) == 0)
-				return true;
+				return 1;
 #else
 			if (::mkdir(path.c_str(), 0777) == 0)
-				return true;
+				return 1;
 #endif
-			return errno == EEXIST;
+			if (errno == EEXIST)
+				return is_directory(path) ? 1 : -1;
+			return 0;
 		}
 	}
 
@@ -215,8 +238,12 @@ namespace ttc_tools
 			if (!partial.empty() && last != '/' && last != '\\')
 				partial.push_back('/');
 			partial.append(path, start, i - start);
-			if (!make_dir(partial))
+			const int state = make_dir(partial);
+			if (state == 0)
 				return details::fail(error, err_mkdir_failed, "cannot create directory '" + partial + "'");
+			if (state < 0)
+				return details::fail(error, err_mkdir_failed,
+					"cannot create directory '" + partial + "': a file with that name is in the way");
 		}
 		return details::pass(error);
 	}

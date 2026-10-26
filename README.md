@@ -3,7 +3,7 @@
 把 TrueType Collection（`.ttc`）拆成独立的 `.ttf` / `.otf`。C++11，无第三方依赖，默认仅头文件
 （与 [shx_tools](https://github.com/xiaohunqupo/shx_tools) 同一套目录与构建约定）。
 
-版本 0.3.0 ｜ [变更日志](CHANGELOG.md) ｜ [格式说明](docs/ttc_format.md)
+版本 0.3.1 ｜ [变更日志](CHANGELOG.md) ｜ [格式说明](docs/ttc_format.md)
 
 ## 这个库解决什么问题
 
@@ -130,6 +130,45 @@ ttcsplit -x <input.ttc> <index> <out>   # 拆单个面
 ttcdump  <input.ttc> [...]              # 打印表目录 + 校验和验证，退出码是问题数
 ```
 
+### 下游会写穿 `const`：`ttf2mesh` 的 `ttf_load_from_mem()`
+
+`ttf2mesh` 1.6 的签名是 `ttf_load_from_mem(const uint8_t*, int, ttf_t**, bool)`，但它在解析时把
+**表目录和若干头结构原地转成主机字节序**（`conv32(rec->checkSum/offset/length)`，以及 `hhea`、
+`cmap`、`glyf` 头等）。小端机器上实测：
+
+| 观察 | 数据 |
+|---|---|
+| 表记录 0 的 `checkSum` / `offset` / `length` | 三个字段前后**完全颠倒**（`0E 30 4C 68` → `68 4C 30 0E`） |
+| 目录之外被改写的字节 | cambria **49 254** 字节、mingliub **197 404** 字节 |
+| 结果 | 混合字节序：既不是合法大端，也不是自洽小端 |
+
+**这不可修复**——被转序的字段取决于它的解析路径，无法逆推；重算校验和救不回来。所以只有两条路：
+
+```cpp
+// 路线 A（推荐）：交给它一份一次性副本，face 保持原样
+const int rc = ttc_tools::with_scratch_copy(face, [&](const std::uint8_t* data, std::size_t size)
+{
+    return ttf_load_from_mem(data, (int)size, &ttf, false);
+});
+// 这里 face 与原来逐字节相同，可以继续落盘或喂给别的库
+```
+
+```cpp
+// 路线 B：交出去的那份就当一次性，后面要用就重新取
+ttf_load_from_mem(face.data(), (int)face.size(), &ttf, false);   // face 已被破坏
+ttc_tools::UnzipTTCFace(path, index, face, nullptr, &error);      // 重新取一份新的
+```
+
+要长期守住这条边界（例如在 debug 构建或自检里），用 `Sfnt::verify()` 断言——它一次遍历就能
+判出"这块内存还是不是一个自洽的 sfnt"：
+
+```cpp
+ttc_tools::Sfnt_Report report;
+if (!ttc_tools::Sfnt::verify(face.data(), face.size(), &report))
+    std::fprintf(stderr, "face is damaged: %s\n", report.first_problem.c_str());
+// 被 ttf2mesh 写坏时：table 'EBDT' at offset 0x5C010000 length 3965059072 runs past the end of the font
+```
+
 ## API
 
 | 函数 | 作用 |
@@ -141,6 +180,8 @@ ttcdump  <input.ttc> [...]              # 打印表目录 + 校验和验证，�
 | `UnzipTTCFaceToFile(file, index, path, face, error)` | 单面落到指定路径 |
 | `Collection` / `Sfnt` | 分两步解析：只读集合头，只读一个面的表目录 |
 | `Sfnt::checksum()` / `Sfnt::tag_string()` | 校验和数学与标签打印，`ttcdump` 就是这么写的 |
+| `Sfnt::verify(face, size, report)` | 校验一个独立字体：每表校验和、4 字节对齐、`head` magic、整文件 `0xB1B0AFBA`；`Sfnt_Report` 给出计数与第一处问题 |
+| `with_scratch_copy(bytes, consumer)` | 交出一份一次性副本给"会写穿 `const`"的消费方（`ttf2mesh` 就是），调用方的字节保持不变 |
 | `file_stem_for()` / `sanitize_file_name()` | 输出文件名的规则，可单独使用 |
 | `UnzipTTc()` / `unzipTTC_Memery()` | 0.2.0 的旧名字，保留可用（后者在 0.2.0 里是有缺陷的，现在只是 `UnzipTTC()` 的别名） |
 
@@ -175,6 +216,22 @@ ttcdump  <input.ttc> [...]              # 打印表目录 + 校验和验证，�
 
 输出侧同样自检，测试里逐项验证：每个面 4 字节对齐、每张表自身校验和与目录一致、
 `head.magicNumber` 保留、**整文件校验和 == `0xB1B0AFBA`**、表数据与源集合逐字节相同。
+
+### 不是 TTC 的文件
+
+`fonts/` 里就混着这种文件：8 个以随机字节开头、带有统一 28 字节头（含 `PA31` 标记）的"字体"，
+整份文件里找不到 `ttcf` / `OTTO` / `wOFF` 任何签名，前 4 KiB 的字节分布接近均匀——典型的**透明
+加密/DRM 包装**（被白名单进程打开时才解密）。这类输入的期望行为是"一行代码干净地拒绝"，而不是
+崩溃或写出半成品：
+
+- 所有入口（`ListTTC` / `UnzipTTC` / `UnzipTTCFace` / `UnzipTTCToDir` / `UnzipTTCFaceToFile`）
+  返回 `false`，`error_info::code == err_not_a_collection`，各自的输出容器保持为空；
+- 不会创建目录、不会留下任何文件；
+- 测试把这类语料当作**正向用例**：库与测试自带的独立读取器必须**对"是不是集合"得出相同结论**，
+  双方都拒绝才算通过，一方接受一方拒绝则报错。
+
+如果你的产品在装了加密客户端的机器上读字体，需要先确认拿到的字节是明文——否则 `.ttc` 在磁盘上
+看起来就是这种包装。
 
 ## 性能
 

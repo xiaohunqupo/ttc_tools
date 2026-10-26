@@ -16,15 +16,15 @@
 
 /*!
  * \name Version
- * Major / minor / patch number of the library, currently 0.3.0. The numbers are maintained here by
+ * Major / minor / patch number of the library, currently 0.3.1. The numbers are maintained here by
  * hand - the build system only reads them - and `CHANGELOG.md` records what changed in each version.
  * Bump them together with a new `CHANGELOG.md` entry.
  */
 ///@{
 #define TTC_TOOLS_VERSION_MAJOR 0 //!< Incompatible API changes.
 #define TTC_TOOLS_VERSION_MINOR 3 //!< New features, backwards compatible.
-#define TTC_TOOLS_VERSION_PATCH 0 //!< Fixes and internal changes.
-#define TTC_TOOLS_VERSION_STRING "0.3.0" //!< The three numbers as one string, for logs and `--version`.
+#define TTC_TOOLS_VERSION_PATCH 1 //!< Fixes and internal changes.
+#define TTC_TOOLS_VERSION_STRING "0.3.1" //!< The three numbers as one string, for logs and `--version`.
 ///@}
 
 #include "ttc_tools/config.h"

@@ -42,7 +42,9 @@ namespace ttc_tools
 		const std::string sub = sanitize_file_name(face.subfamily);
 		if (stem_taken(candidate, used) && !sub.empty())
 			candidate = base + "_" + sub;
-		for (unsigned int n = 2; stem_taken(candidate, used) && n < 10000u; ++n)
+		// `used` holds at most one stem per face and the numeric candidates below are distinct from
+		// each other, so among `used.size() + 1` of them at least one cannot be taken.
+		for (std::size_t n = 2; stem_taken(candidate, used) && n <= used.size() + 2; ++n)
 			candidate = base + "_" + (sub.empty() ? std::string() : sub + "_") + std::to_string((unsigned long long)n);
 		return candidate;
 	}

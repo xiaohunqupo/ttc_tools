@@ -33,6 +33,30 @@ namespace ttc_tools
 	};
 
 	/*!
+	 * \brief What `Sfnt::verify()` found in a standalone font.
+	 *
+	 * Every counter is zero and both flags are `true` for a usable font; `first_problem` carries the
+	 * first thing that was wrong, in printable form, so a failure can be logged without a formatter.
+	 */
+	struct Sfnt_Report
+	{
+		std::uint32_t table_count = 0;		//!< Number of tables the directory declares.
+		std::uint32_t out_of_bounds = 0;	//!< Records or payloads that do not fit in the font.
+		std::uint32_t unaligned = 0;		//!< Table payloads not starting on a four byte boundary.
+		std::uint32_t bad_checksums = 0;	//!< Payloads that do not match their stored table checksum.
+		bool head_magic = false;			//!< `head.magicNumber` is `0x5F0F3CF5` (a face needs one).
+		bool whole_checksum_ok = false;		//!< The whole font sums to `0xB1B0AFBA`.
+		std::uint32_t whole_checksum = 0;	//!< The sum that was actually computed.
+		std::string first_problem;			//!< Empty when `ok()`.
+
+		bool ok() const
+		{
+			return out_of_bounds == 0 && unaligned == 0 && bad_checksums == 0 &&
+				head_magic && whole_checksum_ok;
+		}
+	};
+
+	/*!
 	 * \brief The table directory of one face inside a collection.
 	 *
 	 * An instance only describes a face; it borrows the collection bytes and copies nothing. Build
@@ -120,12 +144,65 @@ namespace ttc_tools
 		 */
 		static const std::uint8_t* table_data(const std::uint8_t* data, const Table_Record& record) { return data + record.offset; }
 
+		/*!
+		 * \brief Check a standalone font (the bytes `build()` produces, or any `.ttf` / `.otf`).
+		 *
+		 * Recomputes every table checksum from the payload, checks the four byte alignment of the
+		 * tables, `head.magicNumber`, and that the whole font sums to `0xB1B0AFBA`. Copies nothing
+		 * except the `head` payload (54 bytes), so it is cheap enough to call in a debug build or a
+		 * self test.
+		 *
+		 * This is the guard for the one dangerous pattern in the calling convention: some consumers
+		 * take a `const std::uint8_t*` and write into it anyway. `ttf2mesh`'s `ttf_load_from_mem()`
+		 * converts the table directory and several header structures to host byte order in place, so
+		 * a face handed to it is afterwards neither a valid big endian font nor a consistent little
+		 * endian one - and that cannot be repaired, because which bytes were converted depends on the
+		 * consumer's parse path. Hand it a copy (`with_scratch_copy()`) or re-extract the face; if a
+		 * buffer may have been near such a consumer, `verify()` says whether it is still sound.
+		 *
+		 * \param face Bytes of the standalone font.
+		 * \param size Byte count.
+		 * \param [out] report Optional detail, always filled as far as the checks got.
+		 * \return `true` when `report->ok()` (or, without a report, when nothing is wrong).
+		 */
+		static bool verify(const std::uint8_t* face, std::size_t size, Sfnt_Report* report = nullptr);
+
 	private:
 		bool m_valid;
 		std::size_t m_start;
 		std::uint32_t m_version;
 		std::vector<Table_Record> m_tables;
 	};
+
+	/*!
+	 * \brief Hand a throwaway copy of `bytes` to a consumer that may write through its pointer.
+	 *
+	 * `ttf2mesh` is the reason this exists: `ttf_load_from_mem()` promises a `const std::uint8_t*`
+	 * and then converts the table directory and several header structures to host byte order in
+	 * place, which leaves the caller's buffer in a mixed endian state that nothing can repair. The
+	 * only safe pattern is to give such a consumer a copy nobody else holds:
+	 *
+	 * \code
+	 * const int rc = ttc_tools::with_scratch_copy(face, [&](const std::uint8_t* data, std::size_t size)
+	 * {
+	 *     return ttf_load_from_mem(data, (int)size, &ttf, false);
+	 * });
+	 * // `face` is untouched here, so it can still be written to disk or used elsewhere.
+	 * \endcode
+	 *
+	 * The copy costs one `memcpy` of the face and is released when the consumer returns.
+	 *
+	 * \param bytes Buffer to copy.
+	 * \param consumer Callable taking `(const std::uint8_t*, std::size_t)`.
+	 * \return Whatever the consumer returns.
+	 */
+	template <typename Consumer>
+	auto with_scratch_copy(const std::vector<std::uint8_t>& bytes, Consumer consumer)
+		-> decltype(consumer(static_cast<const std::uint8_t*>(nullptr), std::size_t(0)))
+	{
+		const std::vector<std::uint8_t> scratch = bytes;
+		return consumer(scratch.empty() ? static_cast<const std::uint8_t*>(nullptr) : &scratch[0], scratch.size());
+	}
 }
 
 #ifdef TTC_TOOLS_HEAD_ONLY

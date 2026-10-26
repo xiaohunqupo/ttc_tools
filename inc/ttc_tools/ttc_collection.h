@@ -134,6 +134,12 @@ namespace ttc_tools
 
 	/*!
 	 * \brief Rebuild one face as a standalone sfnt in memory.
+	 *
+	 * The bytes are the caller's. Note that some consumers take a `const std::uint8_t*` and write
+	 * into it anyway (`ttf2mesh` converts the directory to host byte order in place), so a face that
+	 * has been handed to such a consumer is damaged beyond repair - see `with_scratch_copy()` in
+	 * `ttc_sfnt.h` for the safe way to do that, and `Sfnt::verify()` for the check.
+	 *
 	 * \param index Face index, `0 .. face_count()-1`.
 	 * \param [out] ttf Receives the complete sfnt bytes.
 	 * \param [out] face Optional metadata.

@@ -200,4 +200,101 @@ namespace ttc_tools
 		const int index = index_of(tag);
 		return index < 0 ? nullptr : &m_tables[(std::size_t)index];
 	}
+
+	TTC_TOOLS_HEAD_ONLY_INLINE bool Sfnt::verify(const std::uint8_t* face, std::size_t size, Sfnt_Report* report)
+	{
+		Sfnt_Report scratch;
+		Sfnt_Report& r = report ? *report : scratch;
+		r = Sfnt_Report();
+
+		if (!face || size < details::kSfntHeaderBytes)
+		{
+			r.first_problem = "shorter than a sfnt header";
+			return false;
+		}
+
+		const std::uint32_t version = details::rd_u32(face);
+		if (version != details::kSfntTrueType && version != details::kSfntTrue && version != details::kSfntOTTO)
+		{
+			r.first_problem = "unknown sfnt version " + details::hex32(version);
+			return false;
+		}
+
+		const std::uint32_t count = details::rd_u16(face + 4);
+		r.table_count = count;
+		if (count == 0 || count > details::kMaxTables)
+		{
+			r.first_problem = "declares " + std::to_string((unsigned long long)count) + " tables, limit is " +
+				std::to_string((unsigned long long)details::kMaxTables);
+			return false;
+		}
+
+		const std::size_t directory_bytes = details::kSfntHeaderBytes + (std::size_t)count * details::kTableRecordBytes;
+		if (directory_bytes > size)
+		{
+			++r.out_of_bounds;
+			r.first_problem = "table directory runs past the end of the font";
+			return false;
+		}
+
+		for (std::uint32_t i = 0; i < count; ++i)
+		{
+			const std::uint8_t* record = face + details::kSfntHeaderBytes + (std::size_t)i * details::kTableRecordBytes;
+			const std::uint32_t tag = details::rd_u32(record);
+			const std::uint32_t stored = details::rd_u32(record + 4);
+			const std::uint32_t offset = details::rd_u32(record + 8);
+			const std::uint32_t length = details::rd_u32(record + 12);
+			const std::string name = tag_string(tag);
+
+			if ((std::size_t)offset + length > size)
+			{
+				++r.out_of_bounds;
+				if (r.first_problem.empty())
+					r.first_problem = "table '" + name + "' at offset " + details::hex32(offset) + " length " +
+						std::to_string((unsigned long long)length) + " runs past the end of the font";
+				continue;
+			}
+			if (offset % 4 != 0)
+			{
+				++r.unaligned;
+				if (r.first_problem.empty())
+					r.first_problem = "table '" + name + "' starts at " + details::hex32(offset) + ", not a multiple of four";
+			}
+			if (tag == details::kTagHead)
+			{
+				if (length >= 16)
+					r.head_magic = details::rd_u32(face + offset + 12) == 0x5F0F3CF5u;
+				if (!r.head_magic && r.first_problem.empty())
+					r.first_problem = "head.magicNumber is missing";
+			}
+
+			// The head table is hashed with its checkSumAdjustment zeroed, everything else as stored.
+			std::uint32_t sum = 0;
+			if (tag == details::kTagHead && length >= 12)
+			{
+				std::vector<std::uint8_t> payload(face + offset, face + offset + length);
+				std::memset(&payload[8], 0, 4);
+				sum = checksum(&payload[0], payload.size());
+			}
+			else
+				sum = checksum(face + offset, length);
+			if (sum != stored)
+			{
+				++r.bad_checksums;
+				if (r.first_problem.empty())
+					r.first_problem = "table '" + name + "' checksum is " + details::hex32(stored) +
+						", its payload gives " + details::hex32(sum);
+			}
+		}
+
+		r.whole_checksum = checksum(face, size);
+		r.whole_checksum_ok = r.whole_checksum == details::kCheckSumMagic;
+		if (!r.whole_checksum_ok && r.first_problem.empty())
+			r.first_problem = "whole font checksum is " + details::hex32(r.whole_checksum) + ", expected " +
+				details::hex32(details::kCheckSumMagic);
+		if (!r.head_magic && r.first_problem.empty())
+			r.first_problem = "the font has no head table";
+
+		return r.ok();
+	}
 }

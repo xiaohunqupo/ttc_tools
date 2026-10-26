@@ -592,8 +592,8 @@ static std::string find_real_font(int argc, char** argv)
 static void test_version()
 {
 	section("version");
-	CHECK(std::string(TTC_TOOLS_VERSION_STRING) == "0.3.0");
-	CHECK(TTC_TOOLS_VERSION_MAJOR == 0 && TTC_TOOLS_VERSION_MINOR == 3 && TTC_TOOLS_VERSION_PATCH == 0);
+	CHECK(std::string(TTC_TOOLS_VERSION_STRING) == "0.3.1");
+	CHECK(TTC_TOOLS_VERSION_MAJOR == 0 && TTC_TOOLS_VERSION_MINOR == 3 && TTC_TOOLS_VERSION_PATCH == 1);
 	CHECK(std::string(ttc_tools::error_name(ttc_tools::err_none)) == "err_none");
 }
 
@@ -936,6 +936,35 @@ static void test_compat_api()
 	std::remove(path.c_str());
 }
 
+//! Every entry point has to reject these bytes the same way, and leave its outputs untouched.
+static void check_rejection(const std::string& path, int expected_code)
+{
+	std::vector<ttc_tools::Face> faces;
+	ttc_tools::error_info error;
+	CHECK(!ttc_tools::ListTTC(path, faces, &error));
+	CHECK_MSG(error.code == expected_code, std::string("ListTTC: ") + ttc_tools::error_name(error.code));
+	CHECK(faces.empty());
+
+	ttc_tools::TTC ttc;
+	CHECK(!ttc_tools::UnzipTTC(path, ttc, &error));
+	CHECK_MSG(error.code == expected_code, std::string("UnzipTTC: ") + ttc_tools::error_name(error.code));
+	CHECK(ttc.ttfs.empty());
+	CHECK(ttc.faces.empty());
+
+	ttc_tools::TTC::TTF one;
+	CHECK(!ttc_tools::UnzipTTCFace(path, 0, one, nullptr, &error));
+	CHECK_MSG(error.code == expected_code, std::string("UnzipTTCFace: ") + ttc_tools::error_name(error.code));
+	CHECK(one.empty());
+
+	std::vector<std::string> written;
+	CHECK(!ttc_tools::UnzipTTCToDir(path, "ttc_tools_test_tmp/rejected", "F", &written, &error));
+	CHECK_MSG(error.code == expected_code, std::string("UnzipTTCToDir: ") + ttc_tools::error_name(error.code));
+	CHECK(written.empty());
+
+	CHECK(!ttc_tools::UnzipTTCFaceToFile(path, 0, "ttc_tools_test_tmp/rejected/x.ttf", nullptr, &error));
+	CHECK_MSG(error.code == expected_code, std::string("UnzipTTCFaceToFile: ") + ttc_tools::error_name(error.code));
+}
+
 static void test_real_font(const std::string& path)
 {
 	std::printf("  using %s\n", path.c_str());
@@ -954,7 +983,22 @@ static void test_real_font(const std::string& path)
 	std::uint32_t version = 0;
 	std::vector<ref::Face> source;
 	std::string why;
-	CHECK_MSG(ref::parse_ttc(collection, version, source, why), why);
+	const bool ref_ok = ref::parse_ttc(collection, version, source, why);
+
+	ttc_tools::Collection parsed;
+	ttc_tools::error_info library_error;
+	const bool library_ok = parsed.parse(&collection[0], collection.size(), &library_error);
+
+	// The corpus is whatever sits in fonts/, so it may hold files that are not collections at all:
+	// encrypted by a DLP agent, truncated, or simply not a font. The two readers have to agree on
+	// that verdict; when both reject, the rejection path is what gets exercised.
+	CHECK_MSG(library_ok == ref_ok, std::string("verdict mismatch, independent reader says: ") + why);
+	if (!library_ok)
+	{
+		std::printf("  rejected: %s: %s\n", ttc_tools::error_name(library_error.code), library_error.message.c_str());
+		check_rejection(path, library_error.code);
+		return;
+	}
 	if (source.empty())
 		return;
 
@@ -1075,11 +1119,140 @@ static void test_classes()
 	CHECK(ttc_tools::file_stem_for(unnamed, 3, "Face", used) == "Face_03");
 	CHECK(ttc_tools::file_stem_for(unnamed, 3, "", used) == "_03");
 
+	// A pile of identical families must still end up with one distinct stem each.
+	std::vector<std::string> many;
+	for (std::size_t i = 0; i < 64; ++i)
+	{
+		const std::string stem = ttc_tools::file_stem_for(named, i, "Face", many);
+		bool clash = false;
+		for (std::size_t k = 0; k < many.size(); ++k)
+			clash = clash || ttc_tools::same_file_name(stem, many[k]);
+		CHECK_MSG(!clash, "duplicate stem from file_stem_for");
+		many.push_back(stem);
+	}
+
 	section("paths");
 	CHECK(ttc_tools::parent_directory("a/b/c.ttf") == "a/b");
 	CHECK(ttc_tools::parent_directory("c.ttf") == ".");
+	CHECK(ttc_tools::parent_directory("/c.ttf") == "/");
 	CHECK(ttc_tools::join_path("a/b", "c.ttf") == "a/b/c.ttf");
 	CHECK(ttc_tools::join_path("a/b/", "c.ttf") == "a/b/c.ttf");
+	CHECK(ttc_tools::join_path("", "c.ttf") == "c.ttf");
+
+	section("directories");
+	{
+		// A previous run that stopped early may have left this name behind in either shape.
+		std::remove("ttc_tools_test_tmp/dirs/file_as_dir");
+		remove_dir("ttc_tools_test_tmp/dirs/file_as_dir");
+
+		// write_file() does not create directories, only the extractors do.
+		const char payload[] = "x";
+		CHECK(!ttc_tools::write_file("ttc_tools_test_tmp/dirs/file_as_dir", (const std::uint8_t*)payload, 1, &error));
+		CHECK(error.code == ttc_tools::err_write_failed);
+
+		CHECK(ttc_tools::ensure_directory("ttc_tools_test_tmp/dirs", &error));
+		CHECK(error.ok());
+		CHECK(ttc_tools::write_file("ttc_tools_test_tmp/dirs/file_as_dir", (const std::uint8_t*)payload, 1, &error));
+		CHECK(error.ok());
+
+		// A plain file in the way is not a directory; saying "ok" here used to be wrong.
+		CHECK(!ttc_tools::ensure_directory("ttc_tools_test_tmp/dirs/file_as_dir", &error));
+		CHECK(error.code == ttc_tools::err_mkdir_failed);
+		CHECK(!error.message.empty());
+
+		CHECK(ttc_tools::ensure_directory("ttc_tools_test_tmp/dirs/a/b/c", &error));
+		CHECK(error.ok());
+		CHECK(ttc_tools::ensure_directory("ttc_tools_test_tmp/dirs/a/b/c", &error));	// already there
+		CHECK(error.ok());
+		CHECK(ttc_tools::ensure_directory("", &error));
+		CHECK(error.ok());
+		std::remove("ttc_tools_test_tmp/dirs/file_as_dir");
+	}
+}
+
+static void test_verify_and_handoff()
+{
+	section("face verification and hand-off");
+	const ref::Bytes collection = fixture::make_ttc(0x00010000u, fixture::two_faces());
+	ttc_tools::TTC ttc;
+	ttc_tools::error_info error;
+	CHECK(ttc_tools::UnzipTTC(&collection[0], collection.size(), ttc, &error));
+	CHECK(ttc.ttfs.size() == 2);
+	if (ttc.ttfs.empty())
+		return;
+
+	ttc_tools::Sfnt_Report report;
+	CHECK(ttc_tools::Sfnt::verify(&ttc.ttfs[0][0], ttc.ttfs[0].size(), &report));
+	CHECK(report.ok());
+	CHECK(report.table_count == 5);
+	CHECK(report.head_magic);
+	CHECK(report.whole_checksum_ok);
+	CHECK(report.whole_checksum == 0xB1B0AFBAu);
+	CHECK(report.bad_checksums == 0);
+	CHECK(report.unaligned == 0);
+	CHECK(report.out_of_bounds == 0);
+	CHECK(report.first_problem.empty());
+
+	// One flipped payload byte has to be caught, by the table checksum and the whole font checksum.
+	// The offset has to come from the rebuilt face, whose layout differs from the collection's.
+	ttc_tools::Sfnt standalone;
+	CHECK(standalone.parse(&ttc.ttfs[0][0], ttc.ttfs[0].size(), 0, &error));
+	const int glyf = standalone.index_of(0x676C7966u);	// 'glyf'
+	CHECK(glyf >= 0);
+	if (glyf >= 0)
+	{
+		std::vector<std::uint8_t> damaged = ttc.ttfs[0];
+		const std::size_t at = (std::size_t)standalone.table((std::size_t)glyf).offset;
+		CHECK(at + 1 < damaged.size());
+		if (at + 1 < damaged.size())
+		{
+			damaged[at] = (std::uint8_t)(damaged[at] ^ 0xFFu);
+			ttc_tools::Sfnt_Report bad;
+			CHECK(!ttc_tools::Sfnt::verify(&damaged[0], damaged.size(), &bad));
+			CHECK(bad.bad_checksums >= 1);
+			CHECK(!bad.whole_checksum_ok);
+			CHECK(!bad.first_problem.empty());
+		}
+	}
+
+	// What a consumer like ttf2mesh does: convert the table directory to host byte order in place.
+	// The result is a mixed endian font that cannot be repaired, only detected.
+	{
+		std::vector<std::uint8_t> scribbled = ttc.ttfs[0];
+		const std::size_t tables = (std::size_t)((scribbled[4] << 8) | scribbled[5]);
+		for (std::size_t t = 0; t < tables; ++t)
+		{
+			for (int field = 1; field <= 3; ++field)	// checkSum, offset, length
+			{
+				std::uint8_t* p = &scribbled[12 + t * 16 + 4 * (std::size_t)field];
+				std::uint8_t tmp = p[0]; p[0] = p[3]; p[3] = tmp;
+				tmp = p[1]; p[1] = p[2]; p[2] = tmp;
+			}
+		}
+		ttc_tools::Sfnt_Report bad;
+		CHECK(!ttc_tools::Sfnt::verify(&scribbled[0], scribbled.size(), &bad));
+		CHECK(bad.out_of_bounds >= 2);
+		CHECK(!bad.first_problem.empty());
+	}
+
+	// The guard: hand the consumer a copy, and the caller's bytes stay untouched.
+	{
+		const std::vector<std::uint8_t> original = ttc.ttfs[0];
+		std::size_t seen = 0;
+		int first = -1;
+		const int returned = ttc_tools::with_scratch_copy(ttc.ttfs[0], [&](const std::uint8_t* data, std::size_t size) {
+			seen = size;
+			first = data[0];
+			data = data;								// the pointer is only borrowed
+			const_cast<std::uint8_t*>(data)[0] = 0xEE;	// exactly what such a consumer does
+			return 7;
+		});
+		CHECK(returned == 7);
+		CHECK(seen == original.size());
+		CHECK(first == (int)original[0]);
+		CHECK(ttc.ttfs[0] == original);
+		CHECK(ttc_tools::Sfnt::verify(&ttc.ttfs[0][0], ttc.ttfs[0].size(), nullptr));
+	}
 }
 
 static void test_real_fonts(int argc, char** argv)
@@ -1120,12 +1293,19 @@ int main(int argc, char** argv)
 	test_malformed();
 	test_compat_api();
 	test_classes();
+	test_verify_and_handoff();
 	test_real_fonts(argc, argv);
 
 	// The tests already removed their files; drop the scratch directories too.
 	remove_dir("ttc_tools_test_tmp/out");
 	remove_dir("ttc_tools_test_tmp/dup");
 	remove_dir("ttc_tools_test_tmp/compat");
+	remove_dir("ttc_tools_test_tmp/rejected");
+	remove_dir("ttc_tools_test_tmp/dirs/a/b/c");
+	remove_dir("ttc_tools_test_tmp/dirs/a/b");
+	remove_dir("ttc_tools_test_tmp/dirs/a");
+	remove_dir("ttc_tools_test_tmp/dirs/file_as_dir");
+	remove_dir("ttc_tools_test_tmp/dirs");
 	remove_dir("ttc_tools_test_tmp/real/nested");
 	remove_dir("ttc_tools_test_tmp/real");
 	remove_dir("ttc_tools_test_tmp");
