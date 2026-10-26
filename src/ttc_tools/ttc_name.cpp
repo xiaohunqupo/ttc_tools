@@ -14,99 +14,103 @@
 
 namespace ttc_tools
 {
-	TTC_TOOLS_HEAD_ONLY_INLINE std::string utf16be_to_utf8(const std::uint8_t* data, std::size_t size)
+	namespace details
 	{
-		std::string out;
-		out.reserve(size / 2);
-		std::size_t i = 0;
-		while (i + 1 < size)
+		TTC_TOOLS_HEAD_ONLY_INLINE std::string utf16be_to_utf8(const std::uint8_t* data, std::size_t size)
 		{
-			std::uint32_t cp = details::rd_u16(data + i);
-			i += 2;
-			if (cp >= 0xD800u && cp <= 0xDBFFu)
+			std::string out;
+			out.reserve(size / 2);
+			std::size_t i = 0;
+			while (i + 1 < size)
 			{
-				if (i + 1 < size)
+				std::uint32_t cp = details::rd_u16(data + i);
+				i += 2;
+				if (cp >= 0xD800u && cp <= 0xDBFFu)
 				{
-					const std::uint32_t low = details::rd_u16(data + i);
-					if (low >= 0xDC00u && low <= 0xDFFFu)
+					if (i + 1 < size)
 					{
-						i += 2;
-						cp = 0x10000u + ((cp - 0xD800u) << 10) + (low - 0xDC00u);
+						const std::uint32_t low = details::rd_u16(data + i);
+						if (low >= 0xDC00u && low <= 0xDFFFu)
+						{
+							i += 2;
+							cp = 0x10000u + ((cp - 0xD800u) << 10) + (low - 0xDC00u);
+						}
+						else
+							cp = 0xFFFDu;
 					}
 					else
 						cp = 0xFFFDu;
 				}
-				else
+				else if (cp >= 0xDC00u && cp <= 0xDFFFu)
 					cp = 0xFFFDu;
+				details::append_utf8(out, cp);
 			}
-			else if (cp >= 0xDC00u && cp <= 0xDFFFu)
-				cp = 0xFFFDu;
-			details::append_utf8(out, cp);
+			return out;
 		}
-		return out;
-	}
 
-	TTC_TOOLS_HEAD_ONLY_INLINE std::string latin1_to_utf8(const std::uint8_t* data, std::size_t size)
-	{
-		std::string out;
-		out.reserve(size);
-		for (std::size_t i = 0; i < size; ++i)
-			details::append_utf8(out, data[i]);
-		return out;
-	}
-
-	TTC_TOOLS_HEAD_ONLY_INLINE bool name_string(const std::uint8_t* data, const Sfnt& sfnt,
-		std::uint16_t name_id, std::string& out)
-	{
-		const Table_Record* table = sfnt.find(details::kTagName);
-		if (!table || table->length < 6)
-			return false;
-
-		const std::uint8_t* name = data + table->offset;
-		const std::uint16_t count = details::rd_u16(name + 2);
-		const std::uint16_t storage = details::rd_u16(name + 4);
-		if (6u + (std::size_t)count * 12u > table->length)
-			return false;
-
-		int best_score = 1000;
-		std::string best;
-		for (std::uint16_t i = 0; i < count; ++i)
+		TTC_TOOLS_HEAD_ONLY_INLINE std::string latin1_to_utf8(const std::uint8_t* data, std::size_t size)
 		{
-			const std::uint8_t* record = name + 6 + (std::size_t)i * 12;
-			const std::uint16_t platform = details::rd_u16(record);
-			const std::uint16_t encoding = details::rd_u16(record + 2);
-			const std::uint16_t language = details::rd_u16(record + 4);
-			const std::uint16_t id = details::rd_u16(record + 6);
-			const std::uint16_t length = details::rd_u16(record + 8);
-			const std::uint16_t offset = details::rd_u16(record + 10);
-			if (id != name_id)
-				continue;
-			if ((std::size_t)storage + offset + length > table->length)
-				continue;
-
-			int score = 0;
-			if (platform == 3)
-				score = (encoding == 1 || encoding == 10) ? 0 : 1;
-			else if (platform == 0)
-				score = 1;
-			else if (platform == 1)
-				score = 3;
-			else
-				continue;
-			if (platform == 3 && language != 0x0409u)
-				++score;
-			if (score >= best_score)
-				continue;
-
-			const std::uint8_t* text = name + storage + offset;
-			best_score = score;
-			best = (platform == 1) ? latin1_to_utf8(text, length) : utf16be_to_utf8(text, length);
+			std::string out;
+			out.reserve(size);
+			for (std::size_t i = 0; i < size; ++i)
+				details::append_utf8(out, data[i]);
+			return out;
 		}
 
-		if (best_score == 1000)
-			return false;
-		out = best;
-		return true;
+		TTC_TOOLS_HEAD_ONLY_INLINE bool name_string(const std::uint8_t* data, const Sfnt& sfnt,
+			std::uint16_t name_id, std::string& out)
+		{
+			const Table_Record* table = sfnt.find(details::kTagName);
+			if (!table || table->length < 6)
+				return false;
+
+			const std::uint8_t* name = data + table->offset;
+			const std::uint16_t count = details::rd_u16(name + 2);
+			const std::uint16_t storage = details::rd_u16(name + 4);
+			if (6u + (std::size_t)count * 12u > table->length)
+				return false;
+
+			int best_score = 1000;
+			std::string best;
+			for (std::uint16_t i = 0; i < count; ++i)
+			{
+				const std::uint8_t* record = name + 6 + (std::size_t)i * 12;
+				const std::uint16_t platform = details::rd_u16(record);
+				const std::uint16_t encoding = details::rd_u16(record + 2);
+				const std::uint16_t language = details::rd_u16(record + 4);
+				const std::uint16_t id = details::rd_u16(record + 6);
+				const std::uint16_t length = details::rd_u16(record + 8);
+				const std::uint16_t offset = details::rd_u16(record + 10);
+				if (id != name_id)
+					continue;
+				if ((std::size_t)storage + offset + length > table->length)
+					continue;
+
+				int score = 0;
+				if (platform == 3)
+					score = (encoding == 1 || encoding == 10) ? 0 : 1;
+				else if (platform == 0)
+					score = 1;
+				else if (platform == 1)
+					score = 3;
+				else
+					continue;
+				if (platform == 3 && language != 0x0409u)
+					++score;
+				if (score >= best_score)
+					continue;
+
+				const std::uint8_t* text = name + storage + offset;
+				best_score = score;
+				best = (platform == 1) ? latin1_to_utf8(text, length) : utf16be_to_utf8(text, length);
+			}
+
+			if (best_score == 1000)
+				return false;
+			out = best;
+			return true;
+		}
+
 	}
 
 	TTC_TOOLS_HEAD_ONLY_INLINE std::string sanitize_file_name(const std::string& name)

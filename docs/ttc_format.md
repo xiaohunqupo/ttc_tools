@@ -88,7 +88,7 @@ offset  size  field
 3. 计算输出长度：`12 + 16n + Σ align4(length)`，一次性 `assign` 成 0 字节缓冲（顺带把表间
    的填充字节清零，保证 4 字节对齐且填充为 0）。
 4. 写字面头：`sfntVersion` 原样，`numTables` 原样，`searchRange` / `entrySelector` /
-   `rangeShift` **重算**（0.2.0 是从源文件照抄，源文件不靠谱时会一起错）。
+   `rangeShift` **重算**，不照抄源文件（源文件不靠谱时会一起错）。
 5. 写表记录：`tag`、`length` 原样，`offset` 换成新位置，`checkSum` 重算。
 6. `memcpy` 每张表的数据。
 7. 若存在 `head`：清零 `checkSumAdjustment` → 重算全部表记录校验和 → 算整文件校验和 → 写回

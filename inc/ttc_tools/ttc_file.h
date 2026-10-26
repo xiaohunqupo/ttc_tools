@@ -1,6 +1,4 @@
 #pragma once
-#ifndef _TTC_FILE_H_
-#define _TTC_FILE_H_
 
 /*!
  * \file ttc_file.h
@@ -46,6 +44,8 @@ namespace ttc_tools
 	 * \param path Directory path, may be empty (nothing to do).
 	 * \param [out] error Optional diagnostic.
 	 * \return `true` when the directory exists afterwards, including the case where it already did.
+	 *         `false` with `err_mkdir_failed` when the path cannot be created, and also when
+	 *         something that is not a directory already owns one of the names.
 	 */
 	bool ensure_directory(const std::string& path, error_info* error = nullptr);
 
@@ -65,5 +65,3 @@ namespace ttc_tools
 #ifdef TTC_TOOLS_HEAD_ONLY
 #include "ttc_tools/ttc_file.cpp"
 #endif // TTC_TOOLS_HEAD_ONLY
-
-#endif // !_TTC_FILE_H_

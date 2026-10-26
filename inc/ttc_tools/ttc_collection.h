@@ -1,6 +1,4 @@
 #pragma once
-#ifndef _TTC_COLLECTION_H_
-#define _TTC_COLLECTION_H_
 
 /*!
  * \file ttc_collection.h
@@ -68,9 +66,6 @@ namespace ttc_tools
 		bool valid() const { return m_valid; }
 		std::uint32_t version() const { return m_version; }		//!< 1.0 (`0x00010000`) or 2.0 (`0x00020000`).
 		std::size_t face_count() const { return m_offsets.size(); }
-		const std::uint8_t* data() const { return m_data; }		//!< Borrowed collection bytes.
-		std::size_t size() const { return m_size; }
-		std::uint32_t face_offset(std::size_t index) const { return m_offsets[index]; }
 
 		/*!
 		 * \brief Parse the table directory of one face.
@@ -134,6 +129,12 @@ namespace ttc_tools
 
 	/*!
 	 * \brief Rebuild one face as a standalone sfnt in memory.
+	 *
+	 * The bytes are the caller's. Note that some consumers take a `const std::uint8_t*` and write
+	 * into it anyway (`ttf2mesh` converts the directory to host byte order in place), so a face that
+	 * has been handed to such a consumer is damaged beyond repair - see `with_scratch_copy()` in
+	 * `ttc_sfnt.h` for the safe way to do that, and `Sfnt::verify()` for the check.
+	 *
 	 * \param index Face index, `0 .. face_count()-1`.
 	 * \param [out] ttf Receives the complete sfnt bytes.
 	 * \param [out] face Optional metadata.
@@ -151,5 +152,3 @@ namespace ttc_tools
 #ifdef TTC_TOOLS_HEAD_ONLY
 #include "ttc_tools/ttc_collection.cpp"
 #endif // TTC_TOOLS_HEAD_ONLY
-
-#endif // !_TTC_COLLECTION_H_

@@ -27,9 +27,7 @@ namespace ttc_tools
 		m_version = 0;
 		m_offsets.clear();
 
-		if (!data)
-			return details::fail(error, err_open_failed, "no data");
-		if (size < details::kHeaderBytes)
+		if (!data || size < details::kHeaderBytes)
 			return details::fail(error, err_truncated, "file is smaller than the 12 byte collection header");
 		if (details::rd_u32(data) != details::kTagTTCF)
 			return details::fail(error, err_not_a_collection, "signature is not 'ttcf'");
@@ -48,15 +46,11 @@ namespace ttc_tools
 		if ((std::size_t)count > (size - details::kHeaderBytes) / 4)
 			return details::fail(error, err_truncated, "face offset array runs past the end of the file");
 
+		// The offsets themselves are checked by `Sfnt::parse()`, which owns the sfnt rules and runs
+		// for every face anyway.
 		m_offsets.resize(count);
 		for (std::uint32_t i = 0; i < count; ++i)
-		{
-			const std::uint32_t offset = details::rd_u32(data + details::kHeaderBytes + (std::size_t)i * 4);
-			if ((std::size_t)offset + details::kSfntHeaderBytes > size)
-				return details::fail(error, err_truncated, "face " + std::to_string((unsigned long long)i) +
-					" starts at " + details::hex32(offset) + ", past the end of the file");
-			m_offsets[i] = offset;
-		}
+			m_offsets[i] = details::rd_u32(data + details::kHeaderBytes + (std::size_t)i * 4);
 
 		m_version = version;
 		m_valid = true;
@@ -82,21 +76,27 @@ namespace ttc_tools
 		return false;
 	}
 
+	//! Fill the metadata of one face from an already parsed directory.
+	TTC_TOOLS_HEAD_ONLY_INLINE void describe_face(const std::uint8_t* data, const Sfnt& sfnt, Face& out)
+	{
+		out = Face();
+		out.sfnt_version = sfnt.version();
+		out.table_count = (std::uint32_t)sfnt.table_count();
+
+		const Table_Record* maxp = sfnt.find(details::kTagMaxp);
+		if (maxp && maxp->length >= 6)
+			out.num_glyphs = details::rd_u16(data + maxp->offset + 4);
+		details::name_string(data, sfnt, 1, out.family);
+		details::name_string(data, sfnt, 2, out.subfamily);
+	}
+
 	TTC_TOOLS_HEAD_ONLY_INLINE bool Collection::describe(std::size_t index, Face& out, error_info* error) const
 	{
 		out = Face();
 		Sfnt sfnt;
 		if (!sfnt_of(index, sfnt, error))
 			return false;
-
-		out.sfnt_version = sfnt.version();
-		out.table_count = (std::uint32_t)sfnt.table_count();
-
-		const Table_Record* maxp = sfnt.find(details::kTagMaxp);
-		if (maxp && maxp->length >= 6)
-			out.num_glyphs = details::rd_u16(m_data + maxp->offset + 4);
-		name_string(m_data, sfnt, 1, out.family);
-		name_string(m_data, sfnt, 2, out.subfamily);
+		describe_face(m_data, sfnt, out);
 		return details::pass(error);
 	}
 
@@ -112,7 +112,7 @@ namespace ttc_tools
 		if (!sfnt.build(m_data, m_size, out, error))
 			return false;
 		if (face)
-			describe(index, *face, nullptr);
+			describe_face(m_data, sfnt, *face);
 		return details::pass(error);
 	}
 
@@ -167,7 +167,7 @@ namespace ttc_tools
 			faces.clear();
 			return false;
 		}
-		return ListTTC(data.empty() ? details::empty_pointer() : &data[0], data.size(), faces, error);
+		return ListTTC(data.empty() ? nullptr : &data[0], data.size(), faces, error);
 	}
 
 	TTC_TOOLS_HEAD_ONLY_INLINE bool UnzipTTC(const void* data, std::size_t size, TTC& ttc, error_info* error)
@@ -193,7 +193,7 @@ namespace ttc_tools
 			ttc.faces.clear();
 			return false;
 		}
-		return UnzipTTC(data.empty() ? details::empty_pointer() : &data[0], data.size(), ttc, error);
+		return UnzipTTC(data.empty() ? nullptr : &data[0], data.size(), ttc, error);
 	}
 
 	TTC_TOOLS_HEAD_ONLY_INLINE bool UnzipTTCFace(const void* data, std::size_t size, std::size_t index,
@@ -220,6 +220,6 @@ namespace ttc_tools
 				*face = Face();
 			return false;
 		}
-		return UnzipTTCFace(data.empty() ? details::empty_pointer() : &data[0], data.size(), index, ttf, face, error);
+		return UnzipTTCFace(data.empty() ? nullptr : &data[0], data.size(), index, ttf, face, error);
 	}
 }

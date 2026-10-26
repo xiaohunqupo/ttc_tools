@@ -59,16 +59,6 @@ namespace ttc_tools
 			return (value + 3u) & ~(std::size_t)3u;
 		}
 
-		/*!
-		 * \brief Valid pointer for an empty buffer, so that "no bytes" is reported as a truncated
-		 *        file and not as "the caller passed nothing".
-		 */
-		inline const std::uint8_t* empty_pointer()
-		{
-			static const std::uint8_t zero = 0;
-			return &zero;
-		}
-
 		//! Hex dump of a 32 bit value, used in error messages.
 		inline std::string hex32(std::uint32_t value)
 		{

@@ -1,11 +1,10 @@
-// ttcdump: print the structure of a TrueType Collection, and check that every face can be rebuilt.
+// ttcdump: print the structure of a TrueType Collection and verify every face it contains.
 //
 //   ttcdump <input.ttc> [...]
 //
-// For every face the table directory is printed, each stored table checksum is compared with the
-// payload, and the rebuilt face is checked against the whole file checksum `0xB1B0AFBA` - the value
-// every valid sfnt has to sum to. The exit code is the number of problems found, so the program can
-// be used as a validator.
+// For every face the table directory is printed and then checked with Sfnt::verify() - table
+// checksums, four byte alignment, head.magicNumber and the whole font checksum 0xB1B0AFBA. The exit
+// code is the number of problems found, so the program doubles as a validator.
 
 #include "ttc_tools/ttc_tools.h"
 #include <cstdio>
@@ -24,9 +23,8 @@ namespace
 			return 1;
 		}
 
-		const std::uint8_t* bytes = data.empty() ? nullptr : &data[0];
 		ttc_tools::Collection collection;
-		if (!collection.parse(bytes, data.size(), &error))
+		if (!collection.parse(data.empty() ? nullptr : &data[0], data.size(), &error))
 		{
 			std::fprintf(stderr, "ttcdump: %s: %s (%s)\n", path.c_str(),
 				error.message.c_str(), ttc_tools::error_name(error.code));
@@ -58,28 +56,14 @@ namespace
 				face.subfamily.c_str(),
 				(unsigned int)sfnt.table_count(),
 				(unsigned int)face.num_glyphs);
-
 			for (std::size_t t = 0; t < sfnt.table_count(); ++t)
 			{
 				const ttc_tools::Table_Record& table = sfnt.table(t);
-				// The head table is stored with a zero adjustment, exactly what build() writes back.
-				std::vector<std::uint8_t> payload(
-					bytes + table.offset, bytes + table.offset + table.length);
-				if (table.tag == ttc_tools::Sfnt::tag_head && payload.size() >= 12)
-				{
-					payload[8] = payload[9] = payload[10] = payload[11] = 0;
-				}
-				const std::uint32_t sum = ttc_tools::Sfnt::checksum(
-					payload.empty() ? nullptr : &payload[0], payload.size());
-				const bool ok = sum == table.check_sum;
-				if (!ok)
-					++problems;
-				std::printf("    %s  off=0x%08X len=%7u sum=0x%08X %s\n",
+				std::printf("    %s  off=0x%08X len=%7u sum=0x%08X\n",
 					ttc_tools::Sfnt::tag_string(table.tag).c_str(),
 					(unsigned int)table.offset,
 					(unsigned int)table.length,
-					(unsigned int)sum,
-					ok ? "ok" : "MISMATCH");
+					(unsigned int)table.check_sum);
 			}
 
 			if (!collection.extract(i, rebuilt, nullptr, &error))
@@ -88,12 +72,15 @@ namespace
 				++problems;
 				continue;
 			}
-			const std::uint32_t whole = ttc_tools::Sfnt::checksum(&rebuilt[0], rebuilt.size());
-			const bool ok = whole == 0xB1B0AFBAu;
+			ttc_tools::Sfnt_Report report;
+			const bool ok = ttc_tools::Sfnt::verify(&rebuilt[0], rebuilt.size(), &report);
 			if (!ok)
 				++problems;
-			std::printf("    rebuilt %u bytes, whole checksum 0x%08X %s\n",
-				(unsigned int)rebuilt.size(), (unsigned int)whole, ok ? "ok" : "MISMATCH");
+			std::printf("    rebuilt %u bytes, verify %s (whole 0x%08X)%s%s\n",
+				(unsigned int)rebuilt.size(), ok ? "ok" : "FAILED",
+				(unsigned int)report.whole_checksum,
+				report.first_problem.empty() ? "" : ": ",
+				report.first_problem.c_str());
 		}
 		return problems;
 	}

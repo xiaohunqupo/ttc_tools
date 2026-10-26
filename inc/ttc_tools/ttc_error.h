@@ -1,6 +1,4 @@
 #pragma once
-#ifndef _TTC_ERROR_H_
-#define _TTC_ERROR_H_
 
 /*!
  * \file ttc_error.h
@@ -59,5 +57,3 @@ namespace ttc_tools
 #ifdef TTC_TOOLS_HEAD_ONLY
 #include "ttc_tools/ttc_error.cpp"
 #endif // TTC_TOOLS_HEAD_ONLY
-
-#endif // !_TTC_ERROR_H_

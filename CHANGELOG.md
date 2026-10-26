@@ -1,5 +1,96 @@
 # 变更日志
 
+## 0.3.1
+
+拿真实字体把公开 API 跑了一遍：7 个真集合（21 个面）全项通过，另外 8 个非 TTC 文件（透明加密
+包装）被一致地拒绝；期间发现并修掉两个库缺陷，以及测试对语料的一个错误假设。
+
+### 修复
+
+- **`ensure_directory()` 把"路径被一个文件占用"报成成功。** `mkdir` 对"已存在的目录"和"同名
+  的文件"都返回 `EEXIST`，旧实现直接当作成功。现在补一次类型查询：路径被文件占用时返回
+  `false` + `err_mkdir_failed`，消息写明 `a file with that name is in the way`。落盘本身此前
+  也会因此失败，所以这不是数据错误，而是**诊断错误**——调用方拿到的是一次假成功。
+- **`file_stem_for()` 的重名循环有魔法上限 10000**，超过后会静默返回一个重复名，让后一个面覆盖
+  前一个。改为按 `used.size() + 1` 个互不相同的候选去试：候选数严格多于已用名数，必然存在空闲
+  名，也不再依赖任意常数。
+
+### 测试
+
+- **测试不再假设语料都是 TTC。** 原先"真实集合"一节对每个语料直接断言 `ref::parse_ttc()` 成功，
+  于是 `fonts/` 里一旦出现非 TTC 文件（加密包装、残缺文件）测试就红。现在先让库与测试自带的
+  独立读取器各自判断，**两者结论必须一致**：都接受 → 全套逐表校验；都拒绝 → 逐个入口断言拒绝
+  行为（返回值、错误码、输出容器为空）；只有结论不一致才算失败。语料目录因此可以放心放"坏文件"。
+- 新增用例：路径被同名文件占用时的 `ensure_directory()`；64 个同名字面连续取文件名必须两两
+  不同；父目录不存在时 `write_file()` 的错误码；`parent_directory()` / `join_path()` 的边界。
+- 测试用例名与清理逻辑对残留状态更健壮（上一轮中断留下的同名目录不会让下一轮误判）。
+
+### 验证
+
+- 7 个真实集合（cambria、mingliub、msgothic、msjh、msjhbd、msjhl、Nirmala，共 21 个面）：
+  每个面逐表与源集合比对、每张表校验和、整文件 `0xB1B0AFBA`、4 字节对齐、`head.magicNumber`
+  全部通过；产出的 21 个 `.ttf` 都能被 ttf2mesh 1.6 加载。
+- 8 个非 TTC 文件（随机字节 + `PA31` 标记的加密包装）：五个入口全部 `err_not_a_collection`，
+  无输出、无残留文件。
+- 独立 API 检查程序（不在仓库内）5948 项断言：全部公开接口、Unicode 文件名（CJK family 落盘后
+  可读回）、磁盘与内存结果逐字节一致、覆盖写；`Sfnt` / `Collection` 与自由函数结果互相印证。
+- 模糊测试：对有效集合 400 轮变异（截断/翻转字节/改头），对每个非 TTC 文件各 40 轮，合计
+  1000+ 轮无崩溃；拒绝时错误码与消息齐备，被接受的变异产物仍然通过结构校验。
+
+### 新增
+
+- **`Sfnt::verify()` + `Sfnt_Report`**：校验一个独立字体（`build()` 的产物，或任意 `.ttf`/`.otf`）
+  —— 逐表重算校验和、4 字节对齐、`head.magicNumber`、整文件 `0xB1B0AFBA`。只额外拷 `head`
+  （54 字节），可以在 debug 构建或自检里直接断言。`Sfnt_Report::first_problem` 给出可直接打印
+  的第一处问题。
+- **`with_scratch_copy(bytes, consumer)`**：把一份**一次性副本**交给"声明 `const` 却会写进去"的
+  消费方，调用方的字节原样保留。这正是 `ttf2mesh` 需要的那层隔离：
+
+  ```cpp
+  const int rc = ttc_tools::with_scratch_copy(face, [&](const std::uint8_t* data, std::size_t size) {
+      return ttf_load_from_mem(data, (int)size, &ttf, false);
+  });
+  // face 与调用前逐字节相同
+  ```
+
+### 文档
+
+- README 增加"不是 TTC 的文件"一节（加密包装的识别特征与期望行为）。
+- README 增加"下游会写穿 `const`"一节，把 `ttf2mesh` 的行为讲清楚：它**不是重算校验和**，而是把
+  表目录与若干头结构**原地 big→host 转序**（实测 cambria 49 254 字节、mingliub 197 404 字节被改，
+  表记录的 `checkSum`/`offset`/`length` 全部前后颠倒），结果是混合字节序、**不可修复**。给出两条
+  正确用法（`with_scratch_copy()` 或重新 `UnzipTTCFace()`）与一条自检（`Sfnt::verify()`）。
+
+### 精简（1.0 之前不留包袱）
+
+- **删掉没有人用的公开接口**：`Collection::data()` / `size()` / `face_offset()`、
+  `Sfnt::start()` / `tables()` / `table_data()`，以及 `Sfnt` 里只为它们存在的 `m_start` 成员。
+  留下的访问器（`version()` / `face_count()` / `table_count()` / `table()` / `index_of()` /
+  `find()`）已经覆盖全部需要。
+- **`name` 表的三个解码器降为内部实现**：`utf16be_to_utf8()` / `latin1_to_utf8()` /
+  `name_string()` 移进 `ttc_tools::details`，公开接口只保留调用方真正会用的
+  `sanitize_file_name()` 与 `same_file_name()`。
+- **空输入只有一种判定**：`nullptr` 与"0 字节"现在都走 `err_truncated`，删掉了为区分二者而存在
+  的 `details::empty_pointer()`（库内 4 处调用）与测试里的 `bytes_pointer()`。
+- **sfnt 结构的校验只留一处**：`Collection::parse()` 不再逐字面预检偏移（那是 `Sfnt::parse()`
+  的职责，而且每个面本来都会调到它），只校验集合头本身。
+- **`Collection::extract()` 不再二次解析表目录**：Face 元数据由已经解析好的 `Sfnt` 直接填出，
+  每个面少一次目录解析。
+- **去掉与 `#pragma once` 重复的 include guard**：7 个头文件各少 3 行，也顺带消除了
+  `_CONFIG_H_` 这类通用宏名与别的库撞车的可能。
+- **`ttcdump` 不再自己重算校验和**：改为打印表目录后直接调 `Sfnt::verify()`，样例少 30 行，
+  验证逻辑也只剩库内一份。
+
+### 兼容性（破坏）
+
+- **移除了对 0.2.0 的全部兼容别名**：`UnzipTTc()`、`unzipTTC_Memery()`、`unzipTTC_Memory()`。
+  0.2.0 的老代码要改用 `UnzipTTCToDir()`（落盘）或 `UnzipTTC()`（进内存）。保留它们除了让
+  0.3.0 的接口表多三行、让测试多一段兼容用例之外没有任何收益：0.2.0 的实现本身跑不通
+  （`unzipTTC_Memery()` 从不写回输出参数），而 0.3.0 已经把调用方全部迁到新名字上。
+- 0.2.0 → 0.3.x 本来就整体换了 API（`ListTTC` / `UnzipTTC` / `UnzipTTCFace` / `Collection` /
+  `Sfnt`），这次只是把最后三行旧名字清掉。
+- 项目还没到 1.0，**不承诺任何旧版本兼容**：删接口、改语义都按"让当前这份最简洁"来做。
+
 ## 0.3.0
 
 一次以"能托付"为目标的收尾：修掉 0.2.0 里跑不通的接口、把逐字节 I/O 换成内存搬运、给外部
@@ -31,8 +122,8 @@
 
 - **内存接口原先什么都不返回。** `unzipTTC_Memery()` 把结果写进局部变量 `tempData`，从未写回
   输出参数，函数末尾也没有 `return`（MSVC `/W4` 报 C4715、C4100）。实测返回 `true` 而
-  `ttfs.size() == 0`。现在是 `UnzipTTC()` 的别名，实测 2 个字面全部返回，另加拼写正确的
-  `unzipTTC_Memory()`。
+  `ttfs.size() == 0`。0.3.0 把它改成 `UnzipTTC()` 的别名并补了拼写正确的 `unzipTTC_Memory()`
+  ——两个别名在 0.3.1 里已删除，直接用 `UnzipTTC(file, ttc, error)`。
 - **失败被当成功。** 输出目录不存在时旧实现什么都不写却返回 `true`；单个字面 `fopen` 失败也
   只是 `continue`。现在目录会自动创建（可多级），任一字面写入失败即整体失败并给出
   `err_write_failed`。

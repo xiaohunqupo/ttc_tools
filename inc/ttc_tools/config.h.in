@@ -1,6 +1,4 @@
 #pragma once
-#ifndef _CONFIG_H_
-#define _CONFIG_H_
 
 /*!
  * \file config.h
@@ -40,5 +38,3 @@
 #else
 #define TTC_TOOLS_HEAD_ONLY_INLINE        //!< Nothing to add when the sources are compiled directly.
 #endif // TTC_TOOLS_HEAD_ONLY
-
-#endif // !_CONFIG_H_

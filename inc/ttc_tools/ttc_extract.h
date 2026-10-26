@@ -1,6 +1,4 @@
 #pragma once
-#ifndef _TTC_EXTRACT_H_
-#define _TTC_EXTRACT_H_
 
 /*!
  * \file ttc_extract.h
@@ -11,7 +9,6 @@
 #include "ttc_tools/ttc_collection.h"
 #include "ttc_tools/ttc_error.h"
 #include <cstddef>
-#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -62,39 +59,8 @@ namespace ttc_tools
 	 */
 	bool UnzipTTCFaceToFile(const std::string& filename, std::size_t index,
 		const std::string& path, Face* face = nullptr, error_info* error = nullptr);
-
-	/* ---------------- 0.3.0 compatibility ---------------- */
-
-	/*!
-	 * \brief Same as `UnzipTTCToDir()`, spelling kept from 0.2.0.
-	 */
-	inline bool UnzipTTc(const std::string& filename, const std::string& dir,
-		const std::string& noNameReplacePrefix = "File")
-	{
-		return UnzipTTCToDir(filename, dir, noNameReplacePrefix, nullptr, nullptr);
-	}
-
-	/*!
-	 * \brief Same as `UnzipTTC()`, spelling kept from 0.2.0.
-	 *
-	 * Until 0.2.0 this filled a local copy and handed nothing back; it does now.
-	 */
-	inline bool unzipTTC_Memery(const std::string& filename, TTC& ttcData)
-	{
-		return UnzipTTC(filename, ttcData, nullptr);
-	}
-
-	/*!
-	 * \brief Same as `unzipTTC_Memery()`, spelled correctly.
-	 */
-	inline bool unzipTTC_Memory(const std::string& filename, TTC& ttcData)
-	{
-		return UnzipTTC(filename, ttcData, nullptr);
-	}
 }
 
 #ifdef TTC_TOOLS_HEAD_ONLY
 #include "ttc_tools/ttc_extract.cpp"
 #endif // TTC_TOOLS_HEAD_ONLY
-
-#endif // !_TTC_EXTRACT_H_
