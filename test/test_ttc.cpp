@@ -860,6 +860,22 @@ static void test_malformed()
 		bytes[12] = 0xFF; bytes[13] = 0xFF; bytes[14] = 0xFF; bytes[15] = 0xF0;
 		expect_failure("face past the end", bytes, ttc_tools::err_truncated);
 	}
+	{	// An offset near 4 GiB must not wrap the bounds check. On a 32 bit build
+		// `offset + 12 > size` overflows and the check would disappear entirely.
+		ref::Bytes bytes = fixture::make_ttc(0x00010000u, fixture::two_faces());
+		bytes[12] = 0xF4; bytes[13] = 0xFF; bytes[14] = 0xFF; bytes[15] = 0xFF;	// face at 0xFFFFFFF4
+		expect_failure("face offset wraps", bytes, ttc_tools::err_truncated);
+	}
+	{	// Same for a table whose offset + length wraps around to zero.
+		ref::Bytes bytes = fixture::make_ttc(0x00010000u, fixture::two_faces());
+		const std::uint32_t face = ref::be32(bytes, 12);
+		const std::size_t record = face + 12;
+		bytes[record + 8] = 0xC0; bytes[record + 9] = 0xFF;
+		bytes[record + 10] = 0xFF; bytes[record + 11] = 0xFF;				// table at 0xFFFFFFC0
+		bytes[record + 12] = 0x00; bytes[record + 13] = 0x00;
+		bytes[record + 14] = 0x00; bytes[record + 15] = 0x40;				// length 0x40, sum is 2^32
+		expect_failure("table size wraps", bytes, ttc_tools::err_truncated);
+	}
 	{	// unknown sfnt version inside the face
 		ref::Bytes bytes = fixture::make_ttc(0x00010000u, fixture::two_faces());
 		const std::uint32_t face = ref::be32(bytes, 12);

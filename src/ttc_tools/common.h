@@ -59,6 +59,17 @@ namespace ttc_tools
 			return (value + 3u) & ~(std::size_t)3u;
 		}
 
+		/*!
+		 * \brief `true` when `[offset, offset + length)` lies inside `size`.
+		 * \note The comparison is done by subtraction, so a crafted `offset` cannot wrap the sum and
+		 *       silently disable the check (which is what `offset + length > size` does on a 32 bit
+		 *       build).
+		 */
+		inline bool fits(std::size_t offset, std::size_t length, std::size_t size)
+		{
+			return offset <= size && length <= size - offset;
+		}
+
 		//! Hex dump of a 32 bit value, used in error messages.
 		inline std::string hex32(std::uint32_t value)
 		{

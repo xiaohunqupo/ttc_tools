@@ -58,7 +58,9 @@ namespace ttc_tools
 		m_version = 0;
 		m_tables.clear();
 
-		if (!data || offset + details::kSfntHeaderBytes > size)
+		// Bounds are checked by subtraction, never by `offset + n > size`: on a 32 bit build the
+		// addition wraps for a crafted offset and the whole check disappears.
+		if (!data || offset > size || size - offset < details::kSfntHeaderBytes)
 			return details::fail(error, err_truncated, "face at " + details::hex32((std::uint32_t)offset) + " runs past the end of the file");
 
 		const std::uint8_t* face = data + offset;
@@ -74,7 +76,7 @@ namespace ttc_tools
 				std::to_string((unsigned long long)details::kMaxTables));
 
 		const std::size_t directory_bytes = details::kSfntHeaderBytes + (std::size_t)count * details::kTableRecordBytes;
-		if (offset + directory_bytes > size)
+		if (directory_bytes > size - offset)
 			return details::fail(error, err_truncated, "face at " + details::hex32((std::uint32_t)offset) +
 				" table directory runs past the end of the file");
 
@@ -87,7 +89,7 @@ namespace ttc_tools
 			table.check_sum = details::rd_u32(record + 4);
 			table.offset = details::rd_u32(record + 8);
 			table.length = details::rd_u32(record + 12);
-			if ((std::size_t)table.offset + table.length > size)
+			if (!details::fits(table.offset, table.length, size))
 				return details::fail(error, err_truncated, "face at " + details::hex32((std::uint32_t)offset) +
 					" table '" + tag_string(table.tag) + "' runs past the end of the file");
 		}
@@ -111,7 +113,7 @@ namespace ttc_tools
 		// The directory was validated by parse(), but the caller may have handed in different bytes.
 		for (std::size_t i = 0; i < count; ++i)
 		{
-			if ((std::size_t)m_tables[i].offset + m_tables[i].length > size)
+			if (!details::fits(m_tables[i].offset, m_tables[i].length, size))
 				return details::fail(error, err_truncated, "table '" + tag_string(m_tables[i].tag) +
 					"' runs past the end of the file");
 		}
@@ -120,15 +122,18 @@ namespace ttc_tools
 		std::size_t total = details::kSfntHeaderBytes + count * details::kTableRecordBytes;
 		for (std::size_t i = 0; i < count; ++i)
 		{
+			// Check before aligning: align4() would wrap on a 32 bit build for a face close to 4 GiB.
+			if (total > 0xFFFFFFFFu - 3u)
+				return details::fail(error, err_bad_face, "face does not fit in 4 GiB");
 			const std::size_t start = details::align4(total);
-			if (start + m_tables[i].length > 0xFFFFFFFFu)
+			if (m_tables[i].length > 0xFFFFFFFFu - start)
 				return details::fail(error, err_bad_face, "face does not fit in 4 GiB");
 			offsets[i] = (std::uint32_t)start;
 			total = start + m_tables[i].length;
 		}
-		total = details::align4(total);
-		if (total > 0xFFFFFFFFu)
+		if (total > 0xFFFFFFFFu - 3u)
 			return details::fail(error, err_bad_face, "face does not fit in 4 GiB");
+		total = details::align4(total);
 
 		out.assign(total, 0);	// also zeroes the padding between the tables
 
@@ -243,7 +248,7 @@ namespace ttc_tools
 			const std::uint32_t length = details::rd_u32(record + 12);
 			const std::string name = tag_string(tag);
 
-			if ((std::size_t)offset + length > size)
+			if (!details::fits(offset, length, size))
 			{
 				++r.out_of_bounds;
 				if (r.first_problem.empty())
