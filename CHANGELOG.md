@@ -1,0 +1,68 @@
+# 变更日志
+
+## 0.3.0
+
+一次以"能托付"为目标的收尾：修掉 0.2.0 里跑不通的接口、把逐字节 I/O 换成内存搬运、给外部
+输入加上边界校验，并补齐测试、CMake 与文档。
+
+### 修复
+
+- **内存接口原先什么都不返回。** `unzipTTC_Memery()` 把结果写进局部变量 `tempData`，从未写回
+  输出参数，函数末尾也没有 `return`（MSVC `/W4` 报 C4715、C4100）。实测返回 `true` 而
+  `ttfs.size() == 0`。现在是 `UnzipTTC()` 的别名，实测 2 个字面全部返回，另加拼写正确的
+  `unzipTTC_Memory()`。
+- **失败被当成功。** 输出目录不存在时旧实现什么都不写却返回 `true`；单个字面 `fopen` 失败也
+  只是 `continue`。现在目录会自动创建（可多级），任一字面写入失败即整体失败并给出
+  `err_write_failed`。
+- **不校验输入。** 16 字节的伪造集合头（`numFonts = 0x7FFFFFFF`）会让 0.2.0 分配 8.6 GB 并
+  空转；字面偏移越界会抛未捕获的 `std::length_error`；表数读到垃圾值时返回 `true` 并写出坏
+  文件。现在有 10 项边界校验（见 README 表格），全部走错误码，不抛异常、不做超额分配。
+- **表头 `searchRange` / `entrySelector` / `rangeShift` 改为重算**，不再照抄源文件。
+
+### 性能
+
+- 读路径从"逐字节 `getc` + 每表 `fseek`"改为"整文件一次 `fread` + `memcpy` 区间 + 一次
+  `fwrite`"，输出缓冲一次分配。
+  - `simsun.ttc`（18 MB / 2 面）：1 618 ms → **17 ms**（≈ 95×）
+  - `mingliub.ttc`（37 MB / 4 面）：6 899 ms → **76 ms**（≈ 90×）
+  - 15 个系统字体合计：≈ 25 s → ≈ 0.3 s
+
+### 新增
+
+- `ListTTC()`：只读集合头与 `name` / `maxp`，列出字面（家族名、子家族名、glyph 数、表数、
+  sfnt 类型）而不复制数据。
+- `UnzipTTC()` / `UnzipTTCFace()` 的内存版与单面版；单面版避免"面数 × 文件长度"的内存峰值。
+- `UnzipTTCToDir()` 与 `UnzipTTCFaceToFile()`：落盘接口，返回写出的路径列表。
+- `error_info` / `error_code` / `error_name()`：可打印的失败原因，`nullptr` 时可忽略。
+- 以 `name` 表命名输出文件（`SimSun.ttf` 而不是 `face_00.ttf`），处理非法字符、UTF-8 截断、
+  重名（`_<subfamily>`、`_2`）、无 `name` 表回退，并按 sfnt 版本选择 `.ttf` / `.otf`。
+- 跨平台：去掉 `fopen_s` / `sprintf_s` / `_MAX_PATH`；Windows 上用 `_wfopen` + UTF-8→UTF-16
+  转换，非 ASCII 字体名也能落盘；目录创建用 `_wmkdir` / `mkdir`。
+- 示例程序改为真正的命令行（`-l` / `-x` / `-v` / `-h`），不再是硬编码路径的空壳。
+- `CMakeLists.txt`（INTERFACE 目标 + `ctest` 接入）、`test/test_ttc.cpp`（自包含回归测试）、
+  `docs/ttc_format.md`（格式与算法说明）、`.gitignore`。
+
+### 测试
+
+- 合成夹具覆盖：双字面往返、共享表池、2.0 头部、`OTTO` 面、奇数长度表的 4 字节填充、
+  重名与无名字面命名、目录自动创建、兼容接口、12 类畸形输入。
+- 断言独立于实现：测试自带一份 sfnt/ttc 读取器，逐表比对源集合与输出、校验每张表校验和、
+  校验整文件校验和 `0xB1B0AFBA`、校验 4 字节对齐与 `head.magicNumber`。
+- 真实字体可选集成测试（`TTC_TOOLS_TEST_FONT`，或自动探测 `fonts/*.ttc` /
+  `C:/Windows/Fonts/simsun.ttc`）。本机 15 个系统集合、36 个字面全部通过。
+
+### 仓库
+
+- 移除了随仓库提交的 18 MB `fonts/simsun.ttc`（中易宋体，厂商专有字体，MIT 只覆盖代码）。
+  本地保留的文件不受影响，测试会自动使用它；仓库内改为 `fonts/README.md` 说明。
+
+### 兼容性
+
+- 0.2.0 的两个函数名与签名保持不变：`UnzipTTc(file, dir, prefix)`、`unzipTTC_Memery(file, ttc)`。
+  两者的行为都变好了（前者会建目录并按字体名命名，后者真的返回数据），但不再"静默成功"。
+- `ttc_tools::TTC` 增加 `version` 与 `faces` 两个成员，`ttfs` 语义不变。
+
+## 0.2.0
+
+- 初版：读取 `.ttc` 头，逐字面复制表数据、重写表偏移、补 `head.checkSumAdjustment`，
+  支持落盘与"进内存"两个入口（后者未写回输出参数）。
