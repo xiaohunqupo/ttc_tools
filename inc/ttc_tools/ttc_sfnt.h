@@ -157,6 +157,29 @@ namespace ttc_tools
 		 */
 		static bool verify(const std::uint8_t* face, std::size_t size, Sfnt_Report* report = nullptr);
 
+		/*!
+		 * \brief Check a standalone font (the bytes `build()` produces, or any `.ttf` / `.otf`).
+		 *
+		 * Recomputes every table checksum from the payload, checks the four byte alignment of the
+		 * tables, `head.magicNumber`, and that the whole font sums to `0xB1B0AFBA`. Copies nothing
+		 * except the `head` payload (54 bytes), so it is cheap enough to call in a debug build or a
+		 * self test.
+		 *
+		 * This is the guard for the one dangerous pattern in the calling convention: some consumers
+		 * take a `const std::uint8_t*` and write into it anyway. `ttf2mesh`'s `ttf_load_from_mem()`
+		 * converts the table directory and several header structures to host byte order in place, so
+		 * a face handed to it is afterwards neither a valid big endian font nor a consistent little
+		 * endian one - and that cannot be repaired, because which bytes were converted depends on the
+		 * consumer's parse path. Hand it a copy (`with_scratch_copy()`) or re-extract the face; if a
+		 * buffer may have been near such a consumer, `verify()` says whether it is still sound.
+		 *
+		 * \param face Bytes of the standalone font.
+		 * \param size Byte count.
+		 * \param [out] report Optional detail, always filled as far as the checks got.
+		 * \return `true` when `report->ok()` (or, without a report, when nothing is wrong).
+		 */
+		static bool verify(const std::uint8_t* face, std::size_t size, Sfnt_Report* report = nullptr);
+
 	private:
 		bool m_valid;
 		std::uint32_t m_version;

@@ -933,6 +933,35 @@ static void check_rejection(const std::string& path, int expected_code)
 	CHECK_MSG(error.code == expected_code, std::string("UnzipTTCFaceToFile: ") + ttc_tools::error_name(error.code));
 }
 
+//! Every entry point has to reject these bytes the same way, and leave its outputs untouched.
+static void check_rejection(const std::string& path, int expected_code)
+{
+	std::vector<ttc_tools::Face> faces;
+	ttc_tools::error_info error;
+	CHECK(!ttc_tools::ListTTC(path, faces, &error));
+	CHECK_MSG(error.code == expected_code, std::string("ListTTC: ") + ttc_tools::error_name(error.code));
+	CHECK(faces.empty());
+
+	ttc_tools::TTC ttc;
+	CHECK(!ttc_tools::UnzipTTC(path, ttc, &error));
+	CHECK_MSG(error.code == expected_code, std::string("UnzipTTC: ") + ttc_tools::error_name(error.code));
+	CHECK(ttc.ttfs.empty());
+	CHECK(ttc.faces.empty());
+
+	ttc_tools::TTC::TTF one;
+	CHECK(!ttc_tools::UnzipTTCFace(path, 0, one, nullptr, &error));
+	CHECK_MSG(error.code == expected_code, std::string("UnzipTTCFace: ") + ttc_tools::error_name(error.code));
+	CHECK(one.empty());
+
+	std::vector<std::string> written;
+	CHECK(!ttc_tools::UnzipTTCToDir(path, "ttc_tools_test_tmp/rejected", "F", &written, &error));
+	CHECK_MSG(error.code == expected_code, std::string("UnzipTTCToDir: ") + ttc_tools::error_name(error.code));
+	CHECK(written.empty());
+
+	CHECK(!ttc_tools::UnzipTTCFaceToFile(path, 0, "ttc_tools_test_tmp/rejected/x.ttf", nullptr, &error));
+	CHECK_MSG(error.code == expected_code, std::string("UnzipTTCFaceToFile: ") + ttc_tools::error_name(error.code));
+}
+
 static void test_real_font(const std::string& path)
 {
 	std::printf("  using %s\n", path.c_str());
@@ -1265,6 +1294,10 @@ int main(int argc, char** argv)
 	// The tests already removed their files; drop the scratch directories too.
 	remove_dir("ttc_tools_test_tmp/out");
 	remove_dir("ttc_tools_test_tmp/dup");
+<<<<<<< HEAD
+=======
+	remove_dir("ttc_tools_test_tmp/compat");
+>>>>>>> 109d551d6562b8281873ba2c7ec2616d82d512f2
 	remove_dir("ttc_tools_test_tmp/rejected");
 	remove_dir("ttc_tools_test_tmp/dirs/a/b/c");
 	remove_dir("ttc_tools_test_tmp/dirs/a/b");
