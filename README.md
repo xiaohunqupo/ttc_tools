@@ -1,3 +1,5 @@
+该项目因为名称冲突，已经更名为 “ttc2sfnt” 并迁移到：https://github.com/xiaohunqupo/ttc2sfnt
+
 # ttc_tools
 
 把 TrueType Collection（`.ttc`）拆成独立的 `.ttf` / `.otf`。C++11，无第三方依赖，默认仅头文件
